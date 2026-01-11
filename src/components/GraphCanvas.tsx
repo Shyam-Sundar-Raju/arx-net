@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import * as d3 from 'd3';
 import type { Node, Edge } from '../types';
 import { createSimulation, updateForces, setEdgePositions, dragBehavior, updateGraphDimensions } from '../lib/graphRenderer';
@@ -16,16 +16,52 @@ interface GraphCanvasProps {
   onCanvasContextMenu?: (event: React.MouseEvent) => void;
 }
 
-const GraphCanvasComponent: React.FC<GraphCanvasProps> = ({
-  nodes, edges, isDirected, isWeighted, useForce, showGrid,
-  onNodeContextMenu, onEdgeContextMenu, onCanvasContextMenu
-}) => {
+const GraphCanvasComponent = forwardRef<
+  { resetLayout: () => void },
+  GraphCanvasProps
+>(({ 
+  nodes,
+  edges,
+  isDirected,
+  isWeighted,
+  useForce,
+  showGrid,
+  onNodeContextMenu,
+  onEdgeContextMenu,
+  onCanvasContextMenu
+}, ref) => {
+
+
   const svgRef = useRef<SVGSVGElement>(null);
   const contentRef = useRef<SVGGElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<d3.Simulation<Node, undefined> | null>(null);
   const zoomBehavior = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const prevSize = useRef({ width: 0, height: 0 });
+  useImperativeHandle(ref, () => ({
+  resetLayout() {
+    if (!simulationRef.current || !wrapperRef.current) return;
+    nodes.forEach((node: any) => {
+      node.fx = null;
+      node.fy = null;
+    });
+
+    const width = wrapperRef.current.clientWidth;
+    const height = wrapperRef.current.clientHeight;
+
+    // restart simulation → recompute layout
+    
+    updateForces(
+      simulationRef.current,
+      edges,
+      useForce,
+      width,
+      height
+    );
+    simulationRef.current.alpha(1).restart();
+  }
+}));
+
 
   // --- Initialize D3 Graph ---
   useEffect(() => {
@@ -285,7 +321,7 @@ const GraphCanvasComponent: React.FC<GraphCanvasProps> = ({
         width="100%"
         height="100%"
         style={{ cursor: 'default' }}
-        onContextMenu={(e) => {
+        onContextMenu={(e: React.MouseEvent<SVGSVGElement>) => {
           if (onCanvasContextMenu) {
             onCanvasContextMenu(e);
           }
@@ -303,9 +339,11 @@ const GraphCanvasComponent: React.FC<GraphCanvasProps> = ({
       </div>
     </div>
   );
-};
+});
 
-export const GraphCanvas = React.memo(GraphCanvasComponent);
+export const GraphCanvas =
+  React.memo(GraphCanvasComponent) as typeof GraphCanvasComponent;
+
 
 const zoomButtonStyle: React.CSSProperties = {
   width: '30px',
