@@ -380,69 +380,50 @@ export const GraphWindow: React.FC<GraphWindowProps> = ({
   const handleCanvasContextMenu = useCallback((e: React.MouseEvent) => { e.preventDefault(); setIsAddingNode(false); setIsEditingWeight(false); setNewNodeId(''); setContextMenu({ x: e.clientX, y: e.clientY, type: 'canvas', data: null }); }, []);
 
 
-return (
-  <div
-    ref={containerRef}
-    className={`graphContainer ${isActive ? 'active' : ''}`}
-    style={{
-      position: isFullScreen ? 'fixed' : 'absolute',
-      left: isFullScreen ? 0 : position.x, top: isFullScreen ? 0 : position.y,
-      width: isFullScreen ? '100vw' : position.width, height: isFullScreen ? '100vh' : position.height,
-      zIndex: isFullScreen ? 1000 : (isActive ? 100 : 10),
-      overflow: 'hidden',
-      transition: isResizing ? 'none' : 'height 0.2s, width 0.2s',
-    }}
-    onMouseDown={() => { onFocus(false); setContextMenu(null); }}
-  >
+  return (
     <div
-      ref={headerRef}
-      className="window-header"
-      onMouseDown={handleDragStart}
-      onDoubleClick={toggleFullScreen}
-      style={{ cursor: 'move' }}
+      ref={containerRef}
+      className={`graphContainer ${isActive ? 'active' : ''}`}
+      style={{
+        position: isFullScreen ? 'fixed' : 'absolute',
+        left: isFullScreen ? 0 : position.x, top: isFullScreen ? 0 : position.y,
+        width: isFullScreen ? '100vw' : position.width, height: isFullScreen ? '100vh' : position.height,
+        zIndex: isFullScreen ? 1000 : (isActive ? 100 : 10),
+        overflow: 'hidden',
+        transition: isResizing ? 'none' : 'height 0.2s, width 0.2s',
+      }}
+      onMouseDown={() => { onFocus(false); setContextMenu(null); }}
     >
-      <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flex: 1, minWidth: 0 }}>
-        <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{title}</span>
+      <div
+        ref={headerRef}
+        className="window-header"
+        onMouseDown={handleDragStart}
+        onDoubleClick={toggleFullScreen}
+        style={{ cursor: 'move' }}
+      >
+        <div style={{ display: 'flex', gap: '5px', alignItems: 'center', flex: 1, minWidth: 0 }}>
+          <span style={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{title}</span>
 
-        <label style={{ fontSize: '0.8em', display: 'flex', alignItems: 'center' }}>
-          <input type="checkbox" checked={useForce} onChange={(e) => setUseForce(e.target.checked)} style={{ marginRight: '3px' }} /> Force
-        </label>
-        <label style={{ fontSize: '0.8em', display: 'flex', alignItems: 'center' }}>
-          <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} style={{ marginRight: '3px' }} /> Grid
-        </label>
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            graphCanvasRef.current?.resetLayout();
-          }}
-          title="Reorder graph"
-        >
-          ⟳
-        </button>
+          <label style={{ fontSize: '0.8em', display: 'flex', alignItems: 'center' }}>
+            <input type="checkbox" checked={useForce} onChange={(e) => setUseForce(e.target.checked)} style={{ marginRight: '3px' }} /> Force
+          </label>
+          <label style={{ fontSize: '0.8em', display: 'flex', alignItems: 'center' }}>
+            <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} style={{ marginRight: '3px' }} /> Grid
+          </label>
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              graphCanvasRef.current?.resetLayout();
+            }}
+            title="Reorder graph"
+          >
+            ⟳
+          </button>
 
-        {/* --- ALGORITHM CONTROLS --- */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '5px', borderLeft: '1px solid #555', paddingLeft: '5px' }}>
-  <button
-    onClick={(e) => {
-      e.stopPropagation();
-      graphCanvasRef.current?.resetLayout();
-    }}
-    title="Reorder graph"
-    style={{
-      fontSize: '0.8em',
-      cursor: 'pointer',
-      background: '#444',
-      color: '#fff',
-      border: 'none',
-      padding: '2px 8px',
-      borderRadius: '2px'
-    }}
-  >
-    ⟳
-  </button>
-
-  <select
+          {/* --- ALGORITHM CONTROLS --- */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '5px', borderLeft: '1px solid #555', paddingLeft: '5px' }}>
+            <select
               value={selectedAlgo}
               onChange={(e) => setSelectedAlgo(e.target.value)}
               onMouseDown={(e) => e.stopPropagation()}
@@ -522,7 +503,7 @@ return (
         <div style={{ flexGrow: 1, position: 'relative', overflow: 'hidden' }}>
           <GraphCanvas
 
-           ref={graphCanvasRef}  nodes={nodes} edges={edges} isDirected={isDirected} isWeighted={isWeighted}
+            ref={graphCanvasRef} nodes={nodes} edges={edges} isDirected={isDirected} isWeighted={isWeighted}
             useForce={useForce} showGrid={showGrid}
             onNodeContextMenu={handleNodeContextMenu}
             onEdgeContextMenu={handleEdgeContextMenu}
