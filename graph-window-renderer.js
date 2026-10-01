@@ -473,7 +473,7 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
         inputName = document.getElementById('graphName').value;
     }
     let displayName;
-    if (!isTypeTree) {
+    if (!isTreeType) {
         displayName = inputName.trim() ? inputName.trim() : `Graph`; // Give a default name if the name field is empty
     } else {
         displayName = inputName.trim() ? inputName.trim() : `Tree`;
