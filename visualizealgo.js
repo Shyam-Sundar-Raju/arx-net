@@ -599,7 +599,6 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
 
-            // ✅ NEW CODE: Check both directions for undirected graphs
             const isActive = activeEdges.has(`${sId}-${tId}`) || 
                              (!directed && activeEdges.has(`${tId}-${sId}`));
 

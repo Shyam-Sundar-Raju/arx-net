@@ -616,6 +616,10 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
 
                 let depth = 1;
 
+                // Track spatial boundaries to guarantee visual BST correctness
+                let minX = curr.x - 1000; // Wide initial left bound
+                let maxX = curr.x + 1000; // Wide initial right bound
+
                 // Traverse the tree to find the correct parent
                 while (curr) {
                     parentNode = curr;
@@ -626,9 +630,11 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
                     const childrenNodes = childrenEdges.map(e => nodes.find(n => String(n.id) === String(e.target)));
 
                     if (numericVal < currVal) {
-                        curr = childrenNodes.find(c => bstValue(c) < currVal); // Move left
+                        maxX = curr.x; // Moving left: the max allowable X is the parent's X
+                        curr = childrenNodes.find(c => bstValue(c) < currVal);
                     } else {
-                        curr = childrenNodes.find(c => bstValue(c) > currVal); // Move right
+                        minX = curr.x; // Moving right: the min allowable X is the parent's X
+                        curr = childrenNodes.find(c => bstValue(c) > currVal);
                     }
 
                     if (curr) depth++;
@@ -636,15 +642,15 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
 
                 // Calculate visual coordinates for the new node
                 const dy = 70; // Fixed vertical spacing
-                // Horizontal spacing decreases as depth increases to prevent branch overlap
-                const dx = Math.max(30, 200 / Math.pow(1.4, depth));
-
                 newY = parentNode.y + dy;
-                newX = numericVal < bstValue(parentNode) ? parentNode.x - dx : parentNode.x + dx;
+
+                // Perfectly bisect the available ancestor boundaries to guarantee BST spatial properties
+                newX = (minX + maxX) / 2;
             }
 
-            // Create and push the new node (id only, matching addVertex - no separate label)
-            const newNodeObj = { id: uniqueId, x: newX, y: newY, vx: 0, vy: 0 };
+            // Create and push the new node. 
+            // IMPORTANT: We explicitly set `label: baseVertex` here so '5_1' displays visually as '5'
+            const newNodeObj = { id: uniqueId, label: baseVertex, x: newX, y: newY, vx: 0, vy: 0 };
             nodes.push(newNodeObj);
 
             // Create and push the edges (if it has a parent)
@@ -809,6 +815,10 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
             let target = curr; // The node object we'll ultimately splice out of the tree
             let children = getChildren(target);
 
+            let nodeToReplace = null;
+            let successorId = null;
+            let successorLabel = null;
+
             if (children.length === 2) {
                 let successor = children.find(c => bstValue(c) > bstValue(target));
 
@@ -818,36 +828,73 @@ function addGraph(edgesInput = null, nodes = null, inputName = null, directed = 
                     successor = leftChild;
                 }
 
-                const oldTargetId = target.id;
-                target.id = successor.id;
+                nodeToReplace = target;
+                successorId = successor.id;
+                successorLabel = successor.label;
 
+                // 1. Give target a unique temporary ID to avoid collisions when rewiring edges
+                const tempId = `temp_del_${Date.now()}`;
+                const oldTargetId = target.id;
+                target.id = tempId;
+
+                // Update all edges connected to the target to use the temp ID
                 edgesRaw.forEach(e => {
-                    if (String(e.source) === String(oldTargetId)) e.source = target.id;
-                    if (String(e.target) === String(oldTargetId)) e.target = target.id;
+                    if (String(e.source) === String(oldTargetId)) e.source = tempId;
+                    if (String(e.target) === String(oldTargetId)) e.target = tempId;
                 });
+
+                // Shift our focus to physically removing the successor node
                 target = successor;
                 children = getChildren(target);
             }
 
-            // `target` now has 0 or 1 children - splice it out
-            const parentEdgeRaw = edgesRaw.find(e => String(e.target) === String(target.id));
+            // `target` now has 0 or 1 children. We safely remove it from the graph structure.
+            const incomingEdgeRaw = edgesRaw.find(e => String(e.target) === String(target.id));
+            const incomingEdgeObj = edges.find(e => e.target === target);
             const child = children[0]; // undefined if target is a leaf
 
-            if (child) {
+            if (incomingEdgeRaw && child) {
                 // One child: reconnect parent directly to that child
-                if (parentEdgeRaw) parentEdgeRaw.target = child.id;
-
-                const parentEdgeObj = edges.find(e => e.target === target);
-                if (parentEdgeObj) parentEdgeObj.target = child;
-            } else if (parentEdgeRaw) {
-                // Leaf: just drop the incoming edge
-                edgesRaw.splice(edgesRaw.indexOf(parentEdgeRaw), 1);
-
-                const parentEdgeObj = edges.find(e => e.target === target);
-                if (parentEdgeObj) edges.splice(edges.indexOf(parentEdgeObj), 1);
+                incomingEdgeRaw.target = child.id;
+                if (incomingEdgeObj) incomingEdgeObj.target = child;
+            } else if (incomingEdgeRaw && !child) {
+                // Leaf: completely drop the incoming edge
+                edgesRaw.splice(edgesRaw.indexOf(incomingEdgeRaw), 1);
+                if (incomingEdgeObj) edges.splice(edges.indexOf(incomingEdgeObj), 1);
             }
 
+            // 2. CRITICAL FIX: Ensure all outgoing edges from the deleted target are completely removed.
+            // (Iterating backwards so splicing doesn't skip array elements)
+            for (let i = edgesRaw.length - 1; i >= 0; i--) {
+                if (String(edgesRaw[i].source) === String(target.id)) {
+                    edgesRaw.splice(i, 1);
+                }
+            }
+            for (let i = edges.length - 1; i >= 0; i--) {
+                if (edges[i].source === target) {
+                    edges.splice(i, 1);
+                }
+            }
+
+            // Physically remove the targeted node object from the array
             nodes.splice(nodes.indexOf(target), 1);
+
+            // 3. If we replaced a 2-child node, safely finalize its ID to the successor's ID now that the original successor is gone
+            if (nodeToReplace) {
+                const tempId = nodeToReplace.id;
+                nodeToReplace.id = successorId;
+
+                if (successorLabel !== undefined) {
+                    nodeToReplace.label = successorLabel;
+                } else {
+                    delete nodeToReplace.label;
+                }
+
+                edgesRaw.forEach(e => {
+                    if (String(e.source) === String(tempId)) e.source = successorId;
+                    if (String(e.target) === String(tempId)) e.target = successorId;
+                });
+            }
 
             // Redraw edges
             link = edgeLayer.selectAll('.link')
