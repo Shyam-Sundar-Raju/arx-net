@@ -593,11 +593,15 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
         });
 
         // Apply Edge & Arrow Colors
+        // Apply Edge & Arrow Colors
         svg.selectAll('.link').each(function () {
             const el = d3.select(this);
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
-            const isActive = activeEdges.has(`${sId}-${tId}`);
+
+            // ✅ NEW CODE: Check both directions for undirected graphs
+            const isActive = activeEdges.has(`${sId}-${tId}`) || 
+                             (!directed && activeEdges.has(`${tId}-${sId}`));
 
             const targetColor = isActive ? nodeVisitColor : edgeColor;
 
