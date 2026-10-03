@@ -14,125 +14,193 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
     });
 
     // Block user interactions with the graph during visualization
-    svg.select('#interaction-blocker').remove(); // Clear any old ones
+    svg.select('#interaction-blocker').remove();
     svg.append('style')
         .attr('id', 'interaction-blocker')
         .text('rect.node, .link, .link2 { pointer-events: none !important; }');
 
-    // Calculate BFS path
     startNodeId = safe(startNodeId);
 
-    const queue = [startNodeId];
-    const visited = new Set();
-    visited.add(startNodeId);
-
-    const levels = {};
-    levels[startNodeId] = 0;
-
     const animationSteps = [];
-    animationSteps.push({
-        type: 'node',
-        id: startNodeId,
-        level: 0,
-        fromEdge: null,
-        queueState: [...queue]
-    });
+    const levels = { [startNodeId]: 0 };
 
-    while (queue.length > 0) {
-        const currentId = queue.shift();
+    // Tracking Variables for snapshots
+    let queueState = [];
+    let visitedState = new Set();
+    let currentId = null;
+    let currentNeighbors = [];
 
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type, // 'node', 'edge', or 'control'
+            line, // Python code line number currently executing
+            queue: [...queueState],
+            visited: Array.from(visitedState),
+            current: currentId,
+            neighbors: [...currentNeighbors],
+            ...extras
+        });
+    };
+
+    // Code Line 4 & 5: Initialization (Accounting for 2 comment lines added)
+    visitedState.add(startNodeId);
+    pushStep('control', 4);
+
+    queueState.push(startNodeId);
+    pushStep('node', 5, { id: startNodeId, level: 0, fromEdge: null });
+
+    while (queueState.length > 0) {
+        pushStep('control', 6); // while queue:
+
+        currentId = queueState.shift();
+
+        // Find all traversable neighbors before we pop so the variables panel updates accurately
+        let neighborsData = [];
+        let neighborIds = [];
         edges.forEach(edge => {
             const sId = safe(edge.source.id || edge.source);
             const tId = safe(edge.target.id || edge.target);
 
-            let isTraversable = false;
-            let nextNodeId = null;
-
-            if (sId === currentId && !visited.has(tId)) {
-                isTraversable = true;
-                nextNodeId = tId;
-            } else if (!directed && tId === currentId && !visited.has(sId)) {
-                isTraversable = true;
-                nextNodeId = sId;
-            }
-
-            if (isTraversable) {
-                visited.add(nextNodeId);
-                queue.push(nextNodeId);
-
-                levels[nextNodeId] = levels[currentId] + 1;
-
-                animationSteps.push({
-                    type: 'edge',
-                    sourceId: sId,
-                    targetId: tId
-                });
-
-                animationSteps.push({
-                    type: 'node',
-                    id: nextNodeId,
-                    level: levels[nextNodeId],
-                    fromEdge: { u: sId, v: tId },
-                    queueState: [...queue]
-                });
+            if (sId === currentId) {
+                neighborsData.push({ neighborId: tId, sId, tId });
+                neighborIds.push(tId);
+            } else if (!directed && tId === currentId) {
+                neighborsData.push({ neighborId: sId, sId, tId });
+                neighborIds.push(sId);
             }
         });
-    }
+        currentNeighbors = neighborIds;
 
-    // Playback State Variables
+        pushStep('control', 7); // current = queue.pop(0)
+
+        if (neighborsData.length > 0) {
+            pushStep('control', 8); // for neighbor in graph[current]:
+        }
+
+        for (let n of neighborsData) {
+            const { neighborId, sId, tId } = n;
+
+            pushStep('control', 9); // if neighbor not in visited:
+
+            if (!visitedState.has(neighborId)) {
+                visitedState.add(neighborId);
+                pushStep('edge', 10, { sourceId: sId, targetId: tId }); // visited.add(neighbor)
+
+                queueState.push(neighborId);
+                levels[neighborId] = levels[currentId] + 1;
+                pushStep('node', 11, {                 // queue.append(neighbor)
+                    id: neighborId,
+                    level: levels[neighborId],
+                    fromEdge: { u: sId, v: tId }
+                });
+            }
+        }
+    }
+    pushStep('control', 6); // Loop termination check
+
+    // Clear neighbors at the end for clean finish
+    currentNeighbors = [];
+    pushStep('control', null);
+
     const totalSteps = animationSteps.length;
-    const BASE_DELAY = 600; // ms per step at 1x speed
+    const BASE_DELAY = 450;
     let currentStep = 0;
     let playInterval = null;
 
-    // Core Render Function
-    const renderGraphState = (targetStep, animate = false) => {
-        // Build sets of all nodes and edges that should be highlighted up to targetStep
-        const activeNodes = new Set();
-        const activeEdges = new Set(); // Stored as "sourceId-targetId"
+    // Python code with built-in dark theme syntax highlighting and type comments
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">BFS</span>(graph, start):`,
+        `    <span style="color: #5c6370; font-style: italic;"># graph: adjacency list e.g., {"a": ["b", "c"]}</span>`,
+        `    <span style="color: #5c6370; font-style: italic;"># start: starting node identifier</span>`,
+        `    visited = {start}`,
+        `    queue = [start]`,
+        `    <span style="color: #c678dd;">while</span> queue:`,
+        `        current = queue.<span style="color: #61afef;">pop</span>(<span style="color: #d19a66;">0</span>)`,
+        `        <span style="color: #c678dd;">for</span> neighbor <span style="color: #c678dd;">in</span> graph[current]:`,
+        `            <span style="color: #c678dd;">if</span> neighbor <span style="color: #c678dd;">not in</span> visited:`,
+        `                visited.<span style="color: #61afef;">add</span>(neighbor)`,
+        `                queue.<span style="color: #61afef;">append</span>(neighbor)`
+    ];
 
+    const renderGraphState = (targetStep, animate = false) => {
+        const activeNodes = new Set();
+        const activeEdges = new Set();
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        // --- Build Dynamic Result Log HTML ---
         let logHTML = `<h3 style="color: #ff8a65;">BFS through graph <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const currentVar = stepData && stepData.current !== null ? stepData.current : 'None';
+        const neighborsVar = stepData && stepData.neighbors ? '[' + stepData.neighbors.join(', ') + ']' : '[]';
+        const queueVar = stepData ? '[' + stepData.queue.join(', ') + ']' : '[]';
+        const visitedVar = stepData ? '{' + stepData.visited.join(', ') + '}' : '{}';
+
+        // Layout container for Code and Variables
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block (Dark Theme with Monospace & Line Numbers)
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            // Highlight uses a subtle dark background with a blue left border so syntax colors stay visible
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+
+            // Gutter for line numbers
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block (Dark Theme with Monospace)
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">current:</span> <span style="color: #e5c07b; font-weight: bold; word-break: break-all;">${currentVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">neighbors:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${neighborsVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">queue:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${queueVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">visited:</span> <span style="color: #61afef; font-weight: bold; word-break: break-all;">${visitedVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>'; // End flex container
+
+        // Traversal Text Log
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let i = 0; i < targetStep; i++) {
             const step = animationSteps[i];
 
-            if (step.type === 'node') {
-                activeNodes.add(safe(step.id));
-            }
-
-            if (step.type === 'edge') {
-                activeEdges.add(`${safe(step.sourceId)}-${safe(step.targetId)}`);
-            }
+            if (step.type === 'node') activeNodes.add(safe(step.id));
+            if (step.type === 'edge') activeEdges.add(`${safe(step.sourceId)}-${safe(step.targetId)}`);
 
             if (step.type === 'node') {
                 if (step.level === 0) {
-                    logHTML += `<div>Started BFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Started BFS at vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> at level <span style="color: #ff8a65; font-weight: bold;">0</span></div>`;
                 } else {
-                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Visited vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> through edge <span style="color: #a3bf60; font-weight: bold;">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65; font-weight: bold;">${step.level}</span></div>`;
                 }
-                if (step.queueState) {
-                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Queue: [${step.queueState.join(', ')}]</div>`;
-                }
-                logHTML += `<br>`;
             }
         }
+
+        logHTML += textLogHTML;
 
         resultLog.innerHTML = logHTML;
         resultLog.scrollTop = resultLog.scrollHeight;
 
-        // Apply Node Colors
+        // --- Apply Graph Visual Updates ---
         svg.selectAll('rect.node').each(function (d) {
             const el = d3.select(this);
             const nodeId = safe(d.id);
 
             const isActive = activeNodes.has(nodeId);
-            const targetColor = isActive
-                ? nodeVisitColor
-                : originalNodeColors.get(nodeId);
+            const targetColor = isActive ? nodeVisitColor : originalNodeColors.get(nodeId);
 
             const lastStepIndex = targetStep - 1;
-            const isLatestNode =
-                lastStepIndex >= 0 &&
+            const isLatestNode = lastStepIndex >= 0 &&
                 animationSteps[lastStepIndex].type === 'node' &&
                 safe(animationSteps[lastStepIndex].id) === nodeId;
 
@@ -143,30 +211,32 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
             }
         });
 
-        // Apply Edge & Arrow Colors
         svg.selectAll('.link').each(function () {
             const el = d3.select(this);
-
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
 
             const isActive = activeEdges.has(`${sId}-${tId}`);
             const targetColor = isActive ? nodeVisitColor : edgeColor;
 
-            // Update edge path
-            if (animate && isActive) {
+            const lastStepIndex = targetStep - 1;
+            const isLatestEdge = lastStepIndex >= 0 &&
+                animationSteps[lastStepIndex].type === 'edge' &&
+                safe(animationSteps[lastStepIndex].sourceId) === sId &&
+                safe(animationSteps[lastStepIndex].targetId) === tId;
+
+            if (animate && isLatestEdge) {
                 el.transition().duration(300).attr('stroke', targetColor);
             } else {
                 el.interrupt().attr('stroke', targetColor);
             }
 
-            // Update associated arrow head
             if (directed) {
                 const uniqueMarkerId = safe(`${arrowId}-${sId}-${tId}`);
                 const markerPath = svg.select(`#${uniqueMarkerId} path`);
 
                 if (!markerPath.empty()) {
-                    if (animate && isActive) {
+                    if (animate && isLatestEdge) {
                         markerPath.transition().duration(300).attr('fill', targetColor);
                     } else {
                         markerPath.interrupt().attr('fill', targetColor);
@@ -178,13 +248,11 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
 
     const startLoop = () => {
         if (currentStep >= totalSteps) {
-            currentStep = 0; // Auto-restart if at end
+            currentStep = 0;
             playback.updateTimeline(0);
         }
 
-        if (currentStep === 0) {
-            renderGraphState(0, false);
-        }
+        if (currentStep === 0) renderGraphState(0, false);
 
         playInterval = setInterval(() => {
             if (currentStep < totalSteps) {
@@ -204,11 +272,6 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
             playInterval = null;
         }
     };
-
-    const rect = container.getBoundingClientRect();
-
-    const x = rect.left + window.scrollX;
-    const y = rect.top + window.scrollY;
 
     // Instantiate controller
     const playback = new GraphPlaybackController(svg, totalSteps, container, {
@@ -248,113 +311,200 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
     });
 
     // Block user interactions with the graph during visualization
-    svg.select('#interaction-blocker').remove(); // Clear any old ones
+    svg.select('#interaction-blocker').remove();
     svg.append('style')
         .attr('id', 'interaction-blocker')
         .text('rect.node, .link, .link2 { pointer-events: none !important; }');
 
     startNodeId = safe(startNodeId);
 
-    // Calculate DFS path using a Stack
-    const stack = [{ id: startNodeId, level: 0, fromEdge: null }];
-    const visited = new Set();
     const animationSteps = [];
 
-    while (stack.length > 0) {
-        const current = stack.pop();
-        const currentId = safe(current.id);
+    // Tracking Variables for snapshots
+    let stackData = [{ id: startNodeId, level: 0, fromEdge: null }];
+    let stackState = [startNodeId];
+    let visitedState = new Set();
+    let currentId = null;
+    let currentNeighbors = [];
 
-        // In DFS, we check if visited after popping
-        if (!visited.has(currentId)) {
-            visited.add(currentId);
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type, // 'node', 'edge', or 'control'
+            line, // Python code line number currently executing
+            stack: [...stackState],
+            visited: Array.from(visitedState),
+            current: currentId,
+            neighbors: [...currentNeighbors],
+            ...extras
+        });
+    };
 
-            // Record edge traversal step if we came from another node
+    // Code Line 4 & 5
+    pushStep('control', 4);
+    pushStep('control', 5);
+
+    while (stackData.length > 0) {
+        pushStep('control', 6); // while stack:
+
+        const current = stackData.pop();
+        currentId = safe(current.id);
+        stackState.pop();
+
+        pushStep('control', 7); // current = stack.pop()
+
+        // Find all traversable neighbors
+        let neighborsData = [];
+        let neighborIds = [];
+        edges.forEach(edge => {
+            const sId = safe(edge.source.id || edge.source);
+            const tId = safe(edge.target.id || edge.target);
+
+            if (sId === currentId) {
+                neighborsData.push({ id: tId, level: current.level + 1, sId, tId });
+                neighborIds.push(tId);
+            } else if (!directed && tId === currentId) {
+                neighborsData.push({ id: sId, level: current.level + 1, sId, tId });
+                neighborIds.push(sId);
+            }
+        });
+        currentNeighbors = neighborIds;
+
+        pushStep('control', 8); // if current not in visited:
+
+        if (!visitedState.has(currentId)) {
+            visitedState.add(currentId);
+
             if (current.fromEdge) {
-                animationSteps.push({ type: 'edge', sourceId: safe(current.fromEdge.u), targetId: safe(current.fromEdge.v) });
+                pushStep('edge', 9, { sourceId: safe(current.fromEdge.u), targetId: safe(current.fromEdge.v) });
             }
 
-            // Record node visitation step
-            animationSteps.push({
-                type: 'node',
+            pushStep('node', 9, {
                 id: currentId,
                 level: current.level,
                 fromEdge: current.fromEdge ? { u: safe(current.fromEdge.u), v: safe(current.fromEdge.v) } : null
             });
 
-            // Gather all valid unvisited neighbors
-            const neighbors = [];
-            edges.forEach(edge => {
-                const sId = safe(edge.source.id || edge.source);
-                const tId = safe(edge.target.id || edge.target);
-
-                let isTraversable = false;
-                let nextNodeId = null;
-
-                if (sId === currentId && !visited.has(tId)) {
-                    isTraversable = true;
-                    nextNodeId = tId;
-                } else if (!directed && tId === currentId && !visited.has(sId)) {
-                    isTraversable = true;
-                    nextNodeId = sId;
-                }
-
-                if (isTraversable) {
-                    neighbors.push({
-                        id: nextNodeId,
-                        level: current.level + 1,
-                        fromEdge: { u: sId, v: tId }
-                    });
-                }
-            });
-
-            // Push neighbors to the stack in reverse order 
-            for (let i = neighbors.length - 1; i >= 0; i--) {
-                stack.push(neighbors[i]);
+            if (neighborsData.length > 0) {
+                pushStep('control', 10); // for neighbor in reversed(graph[current]):
             }
-            animationSteps[animationSteps.length - 1].stackState = stack.map(s => s.id);
+
+            const reversedNeighbors = [...neighborsData].reverse();
+            for (let n of reversedNeighbors) {
+                pushStep('control', 11); // if neighbor not in visited:
+                if (!visitedState.has(n.id)) {
+                    stackData.push({
+                        id: n.id,
+                        level: n.level,
+                        fromEdge: { u: n.sId, v: n.tId }
+                    });
+                    stackState.push(n.id);
+                    pushStep('control', 12); // stack.append(neighbor)
+                }
+            }
         }
     }
+    pushStep('control', 6); // Loop termination check
 
-    // Playback State Variables
+    // Clear neighbors at the end for clean finish
+    currentNeighbors = [];
+    pushStep('control', null);
+
     const totalSteps = animationSteps.length;
-    const BASE_DELAY = 600; // ms per step at 1x speed
+    const BASE_DELAY = 450;
     let currentStep = 0;
     let playInterval = null;
 
-    // Core Render Function
+    // Python code with built-in dark theme syntax highlighting and type comments
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">DFS</span>(graph, start):`,
+        `    <span style="color: #5c6370; font-style: italic;"># graph: adjacency list e.g., {"a": ["b", "c"]}</span>`,
+        `    <span style="color: #5c6370; font-style: italic;"># start: starting node identifier</span>`,
+        `    visited = <span style="color: #56b6c2;">set</span>()`,
+        `    stack = [start]`,
+        `    <span style="color: #c678dd;">while</span> stack:`,
+        `        current = stack.<span style="color: #61afef;">pop</span>()`,
+        `        <span style="color: #c678dd;">if</span> current <span style="color: #c678dd;">not in</span> visited:`,
+        `            visited.<span style="color: #61afef;">add</span>(current)`,
+        `            <span style="color: #c678dd;">for</span> neighbor <span style="color: #c678dd;">in</span> <span style="color: #56b6c2;">reversed</span>(graph[current]):`,
+        `                <span style="color: #c678dd;">if</span> neighbor <span style="color: #c678dd;">not in</span> visited:`,
+        `                    stack.<span style="color: #61afef;">append</span>(neighbor)`
+    ];
+
     const renderGraphState = (targetStep, animate = false) => {
         const activeNodes = new Set();
-        const activeEdges = new Set(); // Stored as "sourceId-targetId"
+        const activeEdges = new Set();
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
 
-        let logHTML = `<h3 style="color: #ff8a65;">DFS through graph <span style="color: #ff8a65;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        // --- Build Dynamic Result Log HTML ---
+        let logHTML = `<h3 style="color: #ff8a65;">DFS through graph <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const currentVar = stepData && stepData.current !== null ? stepData.current : 'None';
+        const neighborsVar = stepData && stepData.neighbors ? '[' + stepData.neighbors.join(', ') + ']' : '[]';
+        const stackVar = stepData ? '[' + stepData.stack.join(', ') + ']' : '[]';
+        const visitedVar = stepData ? '{' + stepData.visited.join(', ') + '}' : '{}';
+
+        // Layout container for Code and Variables
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block (Dark Theme with Monospace & Line Numbers)
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            // Highlight uses a subtle dark background with a blue left border so syntax colors stay visible
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+
+            // Gutter for line numbers
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block (Dark Theme with Monospace)
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">current:</span> <span style="color: #e5c07b; font-weight: bold; word-break: break-all;">${currentVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">neighbors:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${neighborsVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">stack:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${stackVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">visited:</span> <span style="color: #61afef; font-weight: bold; word-break: break-all;">${visitedVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>'; // End flex container
+
+        // Traversal Text Log
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let i = 0; i < targetStep; i++) {
             const step = animationSteps[i];
+
             if (step.type === 'node') activeNodes.add(safe(step.id));
             if (step.type === 'edge') activeEdges.add(`${safe(step.sourceId)}-${safe(step.targetId)}`);
 
             if (step.type === 'node') {
                 if (step.level === 0) {
-                    logHTML += `<div>Started DFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Started DFS at vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> at level <span style="color: #ff8a65; font-weight: bold;">0</span></div>`;
                 } else {
-                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Visited vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> through edge <span style="color: #a3bf60; font-weight: bold;">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65; font-weight: bold;">${step.level}</span></div>`;
                 }
-                if (step.stackState) {
-                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Stack: [${step.stackState.join(', ')}]</div>`;
-                }
-                logHTML += `<br>`;
             }
         }
+
+        logHTML += textLogHTML;
 
         resultLog.innerHTML = logHTML;
         resultLog.scrollTop = resultLog.scrollHeight;
 
-        // Apply Node Colors
+        // --- Apply Graph Visual Updates ---
         svg.selectAll('rect.node').each(function (d) {
             const el = d3.select(this);
             const nodeId = safe(d.id);
-            const isActive = activeNodes.has(nodeId);
 
+            const isActive = activeNodes.has(nodeId);
             const targetColor = isActive ? nodeVisitColor : originalNodeColors.get(nodeId);
 
             const lastStepIndex = targetStep - 1;
@@ -369,28 +519,32 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
             }
         });
 
-        // Apply Edge & Arrow Colors
         svg.selectAll('.link').each(function () {
             const el = d3.select(this);
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
-            const isActive = activeEdges.has(`${sId}-${tId}`);
 
+            const isActive = activeEdges.has(`${sId}-${tId}`);
             const targetColor = isActive ? nodeVisitColor : edgeColor;
 
-            // Update edge path
-            if (animate && isActive) {
+            const lastStepIndex = targetStep - 1;
+            const isLatestEdge = lastStepIndex >= 0 &&
+                animationSteps[lastStepIndex].type === 'edge' &&
+                safe(animationSteps[lastStepIndex].sourceId) === sId &&
+                safe(animationSteps[lastStepIndex].targetId) === tId;
+
+            if (animate && isLatestEdge) {
                 el.transition().duration(300).attr('stroke', targetColor);
             } else {
                 el.interrupt().attr('stroke', targetColor);
             }
 
-            // Update associated arrow head
             if (directed) {
                 const uniqueMarkerId = safe(`${arrowId}-${sId}-${tId}`);
                 const markerPath = svg.select(`#${uniqueMarkerId} path`);
+
                 if (!markerPath.empty()) {
-                    if (animate && isActive) {
+                    if (animate && isLatestEdge) {
                         markerPath.transition().duration(300).attr('fill', targetColor);
                     } else {
                         markerPath.interrupt().attr('fill', targetColor);
@@ -402,7 +556,7 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
 
     const startLoop = () => {
         if (currentStep >= totalSteps) {
-            currentStep = 0; // Auto-restart if at end
+            currentStep = 0;
             playback.updateTimeline(0);
         }
 
@@ -427,31 +581,25 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
         }
     };
 
-    const rect = container.getBoundingClientRect();
-
-    const x = rect.left + window.scrollX;
-    const y = rect.top + window.scrollY;
-
     // Instantiate controller
-    const playback = new GraphPlaybackController(svg, totalSteps, container,
-        {
-            onPlay: startLoop,
-            onPause: stopLoop,
-            onSeek: (step) => {
-                currentStep = step;
-                renderGraphState(currentStep, false);
-            },
-            onSpeedChange: () => {
-                if (playInterval) {
-                    stopLoop();
-                    startLoop();
-                }
-            },
-            onEnd: () => {
+    const playback = new GraphPlaybackController(svg, totalSteps, container, {
+        onPlay: startLoop,
+        onPause: stopLoop,
+        onSeek: (step) => {
+            currentStep = step;
+            renderGraphState(currentStep, false);
+        },
+        onSpeedChange: () => {
+            if (playInterval) {
                 stopLoop();
-                renderGraphState(0, false);
+                startLoop();
             }
-        });
+        },
+        onEnd: () => {
+            stopLoop();
+            renderGraphState(0, false);
+        }
+    });
 
     startLoop();
     renderGraphState(0, false);
@@ -478,46 +626,93 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
 
     startNodeId = safe(startNodeId);
 
-    // Initialize Dijkstra's requirements
-    const distances = {};
-    nodes.forEach(n => {
-        const nId = safe(n.id !== undefined ? n.id : n);
-        distances[nId] = Infinity;
-    });
-    distances[startNodeId] = 0;
-
-    // Use the custom PriorityQueue
-    const pq = new PriorityQueue();
-    pq.enqueue({ id: startNodeId, fromEdge: null }, 0);
-
-    const visited = new Set();
     const animationSteps = [];
 
+    // Track states
+    let distancesState = {};
+    nodes.forEach(n => {
+        distancesState[safe(n.id !== undefined ? n.id : n)] = Infinity;
+    });
+    
+    let visitedState = new Set();
+    let currentId = null;
+    let currentNeighbors = [];
+    let currentDistState = null;
+    let pqState = [];
+
+    const pushStep = (type, line, extras = {}) => {
+        const dists = {};
+        for(let k in distancesState) dists[k] = distancesState[k];
+        
+        animationSteps.push({
+            type, // 'node', 'edge', or 'control'
+            line,
+            pq: [...pqState],
+            visited: Array.from(visitedState),
+            distances: dists,
+            current: currentId,
+            currentDist: currentDistState,
+            neighbors: [...currentNeighbors],
+            ...extras
+        });
+    };
+
+    pushStep('control', 2); // distances = {node: inf for node in graph}
+
+    distancesState[startNodeId] = 0;
+    pushStep('control', 3); // distances[start] = 0
+
+    pqState.push(`(0, ${startNodeId})`);
+    pushStep('control', 4); // pq = [(0, start)]
+
+    pushStep('control', 5); // visited = set()
+
+    const distances = {};
+    nodes.forEach(n => { distances[safe(n.id !== undefined ? n.id : n)] = Infinity; });
+    distances[startNodeId] = 0;
+
+    const pq = new PriorityQueue();
+    pq.enqueue({ id: startNodeId, fromEdge: null }, 0);
+    const visited = new Set();
+
     while (!pq.isEmpty()) {
+        pushStep('control', 6); // while pq:
+
         const current = pq.dequeue();
         const u = safe(current.element.id);
         const currentDist = current.priority;
         const fromEdge = current.element.fromEdge;
 
-        // Skip if we've already finalized the shortest path to this node
-        if (visited.has(u)) continue;
+        currentId = u;
+        currentDistState = currentDist;
+        pqState = pq.items.map(i => `(${i.priority}, ${i.element.id})`);
 
-        visited.add(u);
+        pushStep('control', 7); // current_dist, current = heappop(pq)
+        
+        pushStep('control', 8); // if current in visited:
 
-        // Record the edge that successfully relaxed this node
-        if (fromEdge) {
-            animationSteps.push({ type: 'edge', sourceId: safe(fromEdge.u), targetId: safe(fromEdge.v) });
+        if (visited.has(u)) {
+            pushStep('control', 9); // continue
+            continue;
         }
 
-        // Record the node visitation (finalized shortest path)
-        animationSteps.push({
-            type: 'node',
+        visited.add(u);
+        visitedState.add(u);
+
+        if (fromEdge) {
+            pushStep('edge', 10, { sourceId: safe(fromEdge.u), targetId: safe(fromEdge.v) });
+        }
+
+        pushStep('node', 10, { // visited.add(current)
             id: u,
             dist: currentDist,
             fromEdge: fromEdge ? { u: safe(fromEdge.u), v: safe(fromEdge.v), weight: fromEdge.weight } : null
         });
 
         // Evaluate all neighbors
+        let validNeighbors = [];
+        let neighborIds = [];
+        
         for (const { source, target, weight } of edges) {
             const sId = safe(source.id !== undefined ? source.id : source);
             const tId = safe(target.id !== undefined ? target.id : target);
@@ -538,49 +733,143 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
                 edgeU = tId; edgeV = sId;
             }
 
-            if (isTraversable && !visited.has(v)) {
-                const alt = distances[u] + edgeWeight;
+            if (isTraversable) {
+                validNeighbors.push({
+                    v, edgeWeight, edgeU, edgeV
+                });
+                neighborIds.push(v);
+            }
+        }
+        
+        currentNeighbors = neighborIds;
+        if (validNeighbors.length > 0) pushStep('control', 11); // for neighbor, weight in graph[current]:
 
-                // Relaxation step
+        for(const neighborObj of validNeighbors) {
+            const { v, edgeWeight, edgeU, edgeV } = neighborObj;
+            
+            pushStep('control', 12, { evalNeighbor: v }); // if neighbor not in visited:
+
+            if (!visited.has(v)) {
+                const alt = distances[u] + edgeWeight;
+                pushStep('control', 13, { evalNeighbor: v, evalAlt: alt }); // new_dist = current_dist + weight
+
+                pushStep('control', 14, { evalNeighbor: v }); // if new_dist < distances[neighbor]:
+                
                 if (alt < distances[v]) {
                     distances[v] = alt;
+                    distancesState[v] = alt;
+                    pushStep('control', 15, { evalNeighbor: v }); // distances[neighbor] = new_dist
+
                     pq.enqueue({ id: v, fromEdge: { u: edgeU, v: edgeV, weight: edgeWeight } }, alt);
+                    pqState = pq.items.map(i => `(${i.priority}, ${i.element.id})`);
+                    pushStep('control', 16, { evalNeighbor: v }); // heappush(pq, (new_dist, neighbor))
                 }
             }
         }
-        animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.id}(${i.priority})`);
     }
+    pushStep('control', 6); // Loop end
 
-    // Playback State Variables
+    currentNeighbors = [];
+    currentId = null;
+    currentDistState = null;
+    pushStep('control', null);
+
     const totalSteps = animationSteps.length;
-    const BASE_DELAY = 600; // ms per step at 1x speed
+    const BASE_DELAY = 600;
     let currentStep = 0;
     let playInterval = null;
 
-    // Core Render Function
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">dijkstra</span>(graph, start):`,
+        `    distances = {node: <span style="color: #61afef;">float</span>(<span style="color: #98c379;">'inf'</span>) <span style="color: #c678dd;">for</span> node <span style="color: #c678dd;">in</span> graph}`,
+        `    distances[start] = <span style="color: #d19a66;">0</span>`,
+        `    pq = [(<span style="color: #d19a66;">0</span>, start)]`,
+        `    visited = <span style="color: #56b6c2;">set</span>()`,
+        `    <span style="color: #c678dd;">while</span> pq:`,
+        `        current_dist, current = heapq.<span style="color: #61afef;">heappop</span>(pq)`,
+        `        <span style="color: #c678dd;">if</span> current <span style="color: #c678dd;">in</span> visited:`,
+        `            <span style="color: #c678dd;">continue</span>`,
+        `        visited.<span style="color: #61afef;">add</span>(current)`,
+        `        <span style="color: #c678dd;">for</span> neighbor, weight <span style="color: #c678dd;">in</span> graph[current]:`,
+        `            <span style="color: #c678dd;">if</span> neighbor <span style="color: #c678dd;">not in</span> visited:`,
+        `                new_dist = current_dist + weight`,
+        `                <span style="color: #c678dd;">if</span> new_dist <span style="color: #56b6c2;">&lt;</span> distances[neighbor]:`,
+        `                    distances[neighbor] = new_dist`,
+        `                    heapq.<span style="color: #61afef;">heappush</span>(pq, (new_dist, neighbor))`
+    ];
+
+    const formatDistances = (dists) => {
+        let items = [];
+        for (let k in dists) {
+            items.push(`${k}: ${dists[k] === Infinity ? 'inf' : dists[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
+
     const renderGraphState = (targetStep, animate = false) => {
         const activeNodes = new Set();
         const activeEdges = new Set();
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
 
-        let logHTML = `<h3 style="color: #ff8a65;">Dijkstra's Algorithm through graph <span style="color: #00759a;">${graphName}</span> </h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        let logHTML = `<h3 style="color: #ff8a65;">Dijkstra's Algorithm through graph <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const currentVar = stepData && stepData.current !== null ? stepData.current : 'None';
+        const currentDistVar = stepData && stepData.currentDist !== null ? stepData.currentDist : 'None';
+        const neighborsVar = stepData && stepData.neighbors ? '[' + stepData.neighbors.join(', ') + ']' : '[]';
+        const pqVar = stepData ? '[' + stepData.pq.join(', ') + ']' : '[]';
+        const visitedVar = stepData ? '{' + stepData.visited.join(', ') + '}' : '{}';
+        const distancesVar = stepData ? formatDistances(stepData.distances) : '{}';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">current:</span> <span style="color: #e5c07b; font-weight: bold;">${currentVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">current_dist:</span> <span style="color: #d19a66; font-weight: bold;">${currentDistVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">neighbors:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${neighborsVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">pq:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${pqVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">visited:</span> <span style="color: #61afef; font-weight: bold; word-break: break-all;">${visitedVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">distances:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${distancesVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
+        // Traversal Text Log
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let i = 0; i < targetStep; i++) {
             const step = animationSteps[i];
+
             if (step.type === 'node') activeNodes.add(safe(step.id));
             if (step.type === 'edge') activeEdges.add(`${safe(step.sourceId)}-${safe(step.targetId)}`);
 
             if (step.type === 'node') {
                 if (step.dist === 0) {
-                    logHTML += `<div>Started at vertex <span style="color: #ff8a65">${step.id}</span> (Distance: <span style="color: #ff8a65">0</span>)</div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Started at vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> (Distance: <span style="color: #ff8a65; font-weight: bold;">0</span>)</div>`;
                 } else {
-                    logHTML += `<div>Finalized vertex <span style="color: #ff8a65">${step.id}</span> via edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> [w: ${step.fromEdge.weight}] - Total Dist: <span style="color: #ff8a65">${step.dist}</span></div>`;
+                    textLogHTML += `<div style="margin-bottom: 8px;">Finalized vertex <span style="color: #ff8a65; font-weight: bold;">${step.id}</span> via edge <span style="color: #a3bf60; font-weight: bold;">(${step.fromEdge.u},${step.fromEdge.v})</span> [w: ${step.fromEdge.weight}] - Total Dist: <span style="color: #ff8a65; font-weight: bold;">${step.dist}</span></div>`;
                 }
-                if (step.pqState) {
-                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
-                }
-                logHTML += `<br>`;
             }
         }
+
+        logHTML += textLogHTML;
 
         resultLog.innerHTML = logHTML;
         resultLog.scrollTop = resultLog.scrollHeight;
@@ -591,13 +880,10 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
             const nodeId = safe(d.id);
 
             const isActive = activeNodes.has(nodeId);
-            const targetColor = isActive
-                ? nodeVisitColor
-                : originalNodeColors.get(nodeId);
+            const targetColor = isActive ? nodeVisitColor : originalNodeColors.get(nodeId);
 
             const lastStepIndex = targetStep - 1;
-            const isLatestNode =
-                lastStepIndex >= 0 &&
+            const isLatestNode = lastStepIndex >= 0 &&
                 animationSteps[lastStepIndex].type === 'node' &&
                 safe(animationSteps[lastStepIndex].id) === nodeId;
 
@@ -608,8 +894,7 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
             }
         });
 
-        // Apply Edge & Arrow Colors
-        // Apply Edge & Arrow Colors
+        // Apply Edge Colors
         svg.selectAll('.link').each(function () {
             const el = d3.select(this);
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
@@ -667,29 +952,24 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
         }
     };
 
-    const rect = container.getBoundingClientRect();
-    const x = rect.left + window.scrollX;
-    const y = rect.top + window.scrollY;
-
-    const playback = new GraphPlaybackController(svg, totalSteps, container,
-        {
-            onPlay: startLoop,
-            onPause: stopLoop,
-            onSeek: (step) => {
-                currentStep = step;
-                renderGraphState(currentStep, false);
-            },
-            onSpeedChange: () => {
-                if (playInterval) {
-                    stopLoop();
-                    startLoop();
-                }
-            },
-            onEnd: () => {
+    const playback = new GraphPlaybackController(svg, totalSteps, container, {
+        onPlay: startLoop,
+        onPause: stopLoop,
+        onSeek: (step) => {
+            currentStep = step;
+            renderGraphState(currentStep, false);
+        },
+        onSpeedChange: () => {
+            if (playInterval) {
                 stopLoop();
-                renderGraphState(0, false);
+                startLoop();
             }
-        });
+        },
+        onEnd: () => {
+            stopLoop();
+            renderGraphState(0, false);
+        }
+    });
 
     startLoop();
     renderGraphState(0, false);
@@ -737,22 +1017,61 @@ function visualizeFloydWarshall(graphName, startNodeId, container, nodes, edges,
     });
 
     const animationSteps = [];
+    
+    // Track states
+    let kState = null, iState = null, jState = null;
+    let newDistState = null;
+    let distsClone = () => {
+        let clone = {};
+        for (let u in dist) {
+            clone[u] = {};
+            for (let v in dist[u]) clone[u][v] = dist[u][v];
+        }
+        return clone;
+    };
+
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            k: kState,
+            i: iState,
+            j: jState,
+            newDist: newDistState,
+            distMatrix: distsClone(),
+            ...extras
+        });
+    };
+
+    pushStep('control', 2);
 
     nodeIds.forEach(k => {
-        // Record phase transition
-        animationSteps.push({ type: 'pivot', k: k });
+        kState = k;
+        iState = null;
+        jState = null;
+        newDistState = null;
+        pushStep('control', 3); 
+        pushStep('pivot', 3, {k: k});
 
         nodeIds.forEach(i => {
             nodeIds.forEach(j => {
                 if (dist[i][k] !== Infinity && dist[k][j] !== Infinity) {
                     const alt = dist[i][k] + dist[k][j];
                     if (alt < dist[i][j]) {
+                        iState = i;
+                        jState = j;
+                        newDistState = alt;
+                        
+                        pushStep('control', 4);
+                        pushStep('control', 5);
+                        pushStep('control', 6);
+                        pushStep('control', 7);
+                        
                         const oldDist = dist[i][j];
                         dist[i][j] = alt;
+                        pushStep('control', 8);
 
-                        // Record successful relaxation
-                        animationSteps.push({
-                            type: 'relax',
+                        pushStep('relax', 8, {
                             k: k,
                             i: i,
                             j: j,
@@ -764,42 +1083,103 @@ function visualizeFloydWarshall(graphName, startNodeId, container, nodes, edges,
             });
         });
     });
+    
+    kState = null; iState = null; jState = null; newDistState = null;
+    pushStep('control', null);
 
-    // Playback State Variables
     const totalSteps = animationSteps.length;
     const BASE_DELAY = 600; // ms per step at 1x speed
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">floyd_warshall</span>(graph, nodes):`,
+        `    <span style="color: #5c6370; font-style: italic;"># dist initialized to adjacency matrix</span>`,
+        `    <span style="color: #c678dd;">for</span> k <span style="color: #c678dd;">in</span> nodes:`,
+        `        <span style="color: #c678dd;">for</span> i <span style="color: #c678dd;">in</span> nodes:`,
+        `            <span style="color: #c678dd;">for</span> j <span style="color: #c678dd;">in</span> nodes:`,
+        `                new_dist = dist[i][k] + dist[k][j]`,
+        `                <span style="color: #c678dd;">if</span> new_dist <span style="color: #56b6c2;">&lt;</span> dist[i][j]:`,
+        `                    dist[i][j] = new_dist`
+    ];
+
+    const formatDistMatrix = (matrix) => {
+        let rows = [];
+        for (let u in matrix) {
+            let cols = [];
+            for (let v in matrix[u]) {
+                cols.push(`${v}: ${matrix[u][v] === Infinity ? 'inf' : matrix[u][v]}`);
+            }
+            rows.push(`  ${u}: {${cols.join(', ')}}`);
+        }
+        return '{\n' + rows.join(',\n') + '\n}';
+    };
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
-        let currentActiveNodes = new Set();
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
 
         let logHTML = `<h3 style="color: #ff8a65;">Floyd-Warshall (All-Pairs) on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
 
+        const currentLine = stepData ? stepData.line : null;
+        const kVar = stepData && stepData.k !== null ? stepData.k : 'None';
+        const iVar = stepData && stepData.i !== null ? stepData.i : 'None';
+        const jVar = stepData && stepData.j !== null ? stepData.j : 'None';
+        const newDistVar = stepData && stepData.newDist !== null ? stepData.newDist : 'None';
+        const distMatrixVar = stepData ? formatDistMatrix(stepData.distMatrix) : '{}';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">k:</span> <span style="color: #e5c07b; font-weight: bold;">${kVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">i:</span> <span style="color: #e5c07b; font-weight: bold;">${iVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">j:</span> <span style="color: #e5c07b; font-weight: bold;">${jVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">new_dist:</span> <span style="color: #d19a66; font-weight: bold;">${newDistVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">dist:</span> <pre style="margin: 0; color: #abb2bf; font-family: inherit; font-size: 11px; overflow-x: auto; max-height: 200px;">${distMatrixVar}</pre></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
+        // Traversal Text Log
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
+
+        let currentActiveNodes = new Set();
+        
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
-            // Build logging history
             if (step.type === 'pivot') {
-                logHTML += `<div style="margin-top: 10px;"><strong>Phase:</strong> Evaluating intermediate node <span style="color: #ff8a65">${step.k}</span></div>`;
+                textLogHTML += `<div style="margin-top: 10px;"><strong>Phase:</strong> Evaluating intermediate node <span style="color: #ff8a65">${step.k}</span></div>`;
             } else if (step.type === 'relax') {
                 const oldStr = step.oldDist === Infinity ? '∞' : step.oldDist;
-                logHTML += `<div>Relaxed <span style="color: #a3bf60">${step.i} &rarr; ${step.j}</span> via <span style="color: #ff8a65">${step.k}</span> (Dist: ${oldStr} &rarr; <span style="color: #ff8a65">${step.newDist}</span>)</div><br>`;
+                textLogHTML += `<div>Relaxed <span style="color: #a3bf60">${step.i} &rarr; ${step.j}</span> via <span style="color: #ff8a65">${step.k}</span> (Dist: ${oldStr} &rarr; <span style="color: #ff8a65">${step.newDist}</span>)</div>`;
             }
 
-            // Highlight the nodes involved in the exact CURRENT step.
             if (idx === targetStep - 1) {
-                if (step.type === 'pivot') {
-                    currentActiveNodes.add(safe(step.k));
-                } else if (step.type === 'relax') {
-                    currentActiveNodes.add(safe(step.k));
-                    currentActiveNodes.add(safe(step.i));
-                    currentActiveNodes.add(safe(step.j));
-                }
+                if (step.k) currentActiveNodes.add(safe(step.k));
+                if (step.i) currentActiveNodes.add(safe(step.i));
+                if (step.j) currentActiveNodes.add(safe(step.j));
             }
         }
 
+        logHTML += textLogHTML;
         resultLog.innerHTML = logHTML;
         resultLog.scrollTop = resultLog.scrollHeight;
 
@@ -852,29 +1232,24 @@ function visualizeFloydWarshall(graphName, startNodeId, container, nodes, edges,
         }
     };
 
-    const rect = container.getBoundingClientRect();
-    const x = rect.left + window.scrollX;
-    const y = rect.top + window.scrollY;
-
-    const playback = new GraphPlaybackController(svg, totalSteps, container,
-        {
-            onPlay: startLoop,
-            onPause: stopLoop,
-            onSeek: (step) => {
-                currentStep = step;
-                renderGraphState(currentStep, false);
-            },
-            onSpeedChange: () => {
-                if (playInterval) {
-                    stopLoop();
-                    startLoop();
-                }
-            },
-            onEnd: () => {
+    const playback = new GraphPlaybackController(svg, totalSteps, container, {
+        onPlay: startLoop,
+        onPause: stopLoop,
+        onSeek: (step) => {
+            currentStep = step;
+            renderGraphState(currentStep, false);
+        },
+        onSpeedChange: () => {
+            if (playInterval) {
                 stopLoop();
-                renderGraphState(0, false);
+                startLoop();
             }
-        });
+        },
+        onEnd: () => {
+            stopLoop();
+            renderGraphState(0, false);
+        }
+    });
 
     startLoop();
     renderGraphState(0, false);
@@ -908,37 +1283,90 @@ function visualizeBellmanFord(graphName, startNodeId, container, nodes, edges, s
     nodeIds.forEach(id => distances[id] = Infinity);
     distances[startNodeId] = 0;
 
+    let distancesState = {};
+    for (let id of nodeIds) distancesState[id] = Infinity;
+    distancesState[startNodeId] = 0;
+    
+    let iState = null;
+    let uState = null;
+    let vState = null;
+    let wState = null;
+    
     const animationSteps = [];
 
-    // Helper for edge evaluation
-    const evaluateEdge = (u, v, weight) => {
+    const pushStep = (type, line, extras = {}) => {
+        const dists = {};
+        for(let k in distancesState) dists[k] = distancesState[k];
+        
         animationSteps.push({
-            type: 'eval',
-            u: u,
-            v: v,
-            w: weight,
-            distU: distances[u],
-            distV: distances[v]
+            type,
+            line,
+            i: iState,
+            u: uState,
+            v: vState,
+            w: wState,
+            distances: dists,
+            ...extras
+        });
+    };
+
+    pushStep('control', 2);
+    pushStep('control', 3);
+
+    // Helper for edge evaluation
+    const evaluateEdge = (u, v, weight, line5, line6, line7) => {
+        uState = u;
+        vState = v;
+        wState = weight;
+        
+        pushStep('control', line5);
+        
+        const typeEval = line5 === 5 ? 'eval' : 'eval_cycle';
+
+        animationSteps.push({
+            type: typeEval,
+            line: line6,
+            i: iState, u: uState, v: vState, w: wState,
+            distances: {...distancesState},
+            distU: distancesState[u],
+            distV: distancesState[v]
         });
 
         if (distances[u] !== Infinity && distances[u] + weight < distances[v]) {
             distances[v] = distances[u] + weight;
-            animationSteps.push({
-                type: 'relax',
-                u: u,
-                v: v,
-                newDist: distances[v]
-            });
+            distancesState[v] = distances[v];
+            
+            pushStep('control', line7);
+            
+            if (line7 === 7) {
+                animationSteps.push({
+                    type: 'relax',
+                    line: line7,
+                    i: iState, u: uState, v: vState, w: wState,
+                    distances: {...distancesState},
+                    newDist: distances[v]
+                });
+            } else {
+                animationSteps.push({
+                    type: 'cycle_found',
+                    line: line7,
+                    i: iState, u: uState, v: vState, w: wState,
+                    distances: {...distancesState},
+                });
+            }
             return true;
         }
         return false;
     };
 
-    // Relax all edges V - 1 times
     let cycleCheckNeeded = true;
 
     for (let i = 1; i < V; i++) {
-        animationSteps.push({ type: 'phase', phase: i, total: V - 1 });
+        iState = i;
+        uState = null; vState = null; wState = null;
+        pushStep('control', 4);
+        animationSteps.push({ type: 'phase', line: 4, phase: i, total: V - 1, i: iState, u: uState, v: vState, w: wState, distances: {...distancesState} });
+        
         let relaxedInThisPhase = false;
 
         for (const edge of edges) {
@@ -946,90 +1374,146 @@ function visualizeBellmanFord(graphName, startNodeId, container, nodes, edges, s
             const v = safe(edge.target.id !== undefined ? edge.target.id : edge.target);
             const weight = edge.weight !== undefined ? edge.weight : 1;
 
-            const relaxed = evaluateEdge(u, v, weight);
+            const relaxed = evaluateEdge(u, v, weight, 5, 6, 7);
             if (relaxed) relaxedInThisPhase = true;
 
-            // Handle undirected edges
             if (!directed) {
-                const relaxedReverse = evaluateEdge(v, u, weight);
+                const relaxedReverse = evaluateEdge(v, u, weight, 5, 6, 7);
                 if (relaxedReverse) relaxedInThisPhase = true;
             }
         }
 
-        // Optimization: If no distances were updated, shortest paths are finalized.
         if (!relaxedInThisPhase) {
-            animationSteps.push({ type: 'early_stop', phase: i });
+            animationSteps.push({ type: 'early_stop', line: 4, phase: i, i: iState, u: uState, v: vState, w: wState, distances: {...distancesState} });
             cycleCheckNeeded = false;
             break;
         }
     }
 
-    // Check for negative-weight cycles
+    iState = null;
+    uState = null; vState = null; wState = null;
+    pushStep('control', 8);
+
     if (cycleCheckNeeded) {
-        animationSteps.push({ type: 'cycle_check' });
+        animationSteps.push({ type: 'cycle_check', line: 8, i: iState, u: uState, v: vState, w: wState, distances: {...distancesState} });
         for (const edge of edges) {
             const u = safe(edge.source.id !== undefined ? edge.source.id : edge.source);
             const v = safe(edge.target.id !== undefined ? edge.target.id : edge.target);
             const weight = edge.weight !== undefined ? edge.weight : 1;
-
-            if (distances[u] !== Infinity && distances[u] + weight < distances[v]) {
-                animationSteps.push({ type: 'cycle_found', u: u, v: v });
-                break;
-            }
-            if ((!directed) && distances[v] !== Infinity && distances[v] + weight < distances[u]) {
-                animationSteps.push({ type: 'cycle_found', u: v, v: u });
-                break;
+            
+            if(evaluateEdge(u, v, weight, 8, 9, 10)) break;
+            if(!directed) {
+                if(evaluateEdge(v, u, weight, 8, 9, 10)) break;
             }
         }
     }
 
-    // Playback State Variables
+    pushStep('control', null);
+
     const totalSteps = animationSteps.length;
     const BASE_DELAY = 600; // ms per step
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">bellman_ford</span>(graph, V, start):`,
+        `    distances = {node: <span style="color: #61afef;">float</span>(<span style="color: #98c379;">'inf'</span>) <span style="color: #c678dd;">for</span> node <span style="color: #c678dd;">in</span> graph}`,
+        `    distances[start] = <span style="color: #d19a66;">0</span>`,
+        `    <span style="color: #c678dd;">for</span> i <span style="color: #c678dd;">in</span> <span style="color: #56b6c2;">range</span>(<span style="color: #d19a66;">1</span>, V):`,
+        `        <span style="color: #c678dd;">for</span> u, v, w <span style="color: #c678dd;">in</span> graph.edges:`,
+        `            <span style="color: #c678dd;">if</span> distances[u] != <span style="color: #56b6c2;">inf</span> <span style="color: #c678dd;">and</span> distances[u] + w <span style="color: #56b6c2;">&lt;</span> distances[v]:`,
+        `                distances[v] = distances[u] + w`,
+        `    <span style="color: #c678dd;">for</span> u, v, w <span style="color: #c678dd;">in</span> graph.edges:`,
+        `        <span style="color: #c678dd;">if</span> distances[u] != <span style="color: #56b6c2;">inf</span> <span style="color: #c678dd;">and</span> distances[u] + w <span style="color: #56b6c2;">&lt;</span> distances[v]:`,
+        `            <span style="color: #61afef;">print</span>(<span style="color: #98c379;">"Negative-weight cycle"</span>)`
+    ];
+
+    const formatDistances = (dists) => {
+        let items = [];
+        for (let k in dists) {
+            items.push(`${k}: ${dists[k] === Infinity ? 'inf' : dists[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Bellman-Ford on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const iVar = stepData && stepData.i !== null ? stepData.i : 'None';
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const wVar = stepData && stepData.w !== null ? stepData.w : 'None';
+        const distancesVar = stepData ? formatDistances(stepData.distances) : '{}';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">i:</span> <span style="color: #e5c07b; font-weight: bold;">${iVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">w:</span> <span style="color: #d19a66; font-weight: bold;">${wVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">distances:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${distancesVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         let currentActiveNodes = new Set();
         let currentActiveEdges = new Set();
         let isRelaxing = false;
 
-        let logHTML = `<h3 style="color: #ff8a65;">Bellman-Ford on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
-            // Build logging history
             if (step.type === 'phase') {
-                logHTML += `<div style="margin-top: 15px;"><strong>Pass <span style="color: #ff8a65">${step.phase}</span> of ${step.total}:</strong> Relaxing all edges</div>`;
-            } else if (step.type === 'eval') {
+                textLogHTML += `<div style="margin-top: 15px;"><strong>Pass <span style="color: #ff8a65">${step.phase}</span> of ${step.total}:</strong> Relaxing all edges</div>`;
+            } else if (step.type === 'eval' || step.type === 'eval_cycle') {
                 const distUStr = step.distU === Infinity ? '∞' : step.distU;
                 const distVStr = step.distV === Infinity ? '∞' : step.distV;
-                logHTML += `<div>Eval <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (w: ${step.w}) | Dist[${step.u}]=${distUStr}, Dist[${step.v}]=${distVStr}</div>`;
+                textLogHTML += `<div>Eval <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (w: ${step.w}) | Dist[${step.u}]=${distUStr}, Dist[${step.v}]=${distVStr}</div>`;
             } else if (step.type === 'relax') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Relaxed! New Dist[${step.v}] = ${step.newDist}</div><br>`;
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Relaxed! New Dist[${step.v}] = ${step.newDist}</div>`;
             } else if (step.type === 'early_stop') {
-                logHTML += `<div style="color: #a3bf60; margin-top: 15px;"><strong>Early Stop:</strong> No relaxations in Pass ${step.phase}. Algorithm complete!</div>`;
+                textLogHTML += `<div style="color: #a3bf60; margin-top: 15px;"><strong>Early Stop:</strong> No relaxations in Pass ${step.phase}. Algorithm complete!</div>`;
             } else if (step.type === 'cycle_check') {
-                logHTML += `<div style="margin-top: 15px;"><strong>Final Pass:</strong> Checking for negative-weight cycles...</div>`;
+                textLogHTML += `<div style="margin-top: 15px;"><strong>Final Pass:</strong> Checking for negative-weight cycles...</div>`;
             } else if (step.type === 'cycle_found') {
-                logHTML += `<div style="color: #ff8a65; font-weight: bold;">Error: Negative-weight cycle detected involving ${step.u} &rarr; ${step.v}!</div>`;
+                textLogHTML += `<div style="color: #ff8a65; font-weight: bold;">Error: Negative-weight cycle detected involving ${step.u} &rarr; ${step.v}!</div>`;
             }
 
-            // Isolate active highlights to the exact current frame
             if (idx === targetStep - 1) {
-                if (step.type === 'eval' || step.type === 'relax' || step.type === 'cycle_found') {
-                    currentActiveNodes.add(safe(step.u));
-                    currentActiveNodes.add(safe(step.v));
-                    currentActiveEdges.add(`${safe(step.u)}-${safe(step.v)}`);
-                    if (step.type === 'relax' || step.type === 'cycle_found') {
-                        isRelaxing = true;
-                    }
+                if (step.u) currentActiveNodes.add(safe(step.u));
+                if (step.v) currentActiveNodes.add(safe(step.v));
+                if (step.u && step.v) currentActiveEdges.add(`${safe(step.u)}-${safe(step.v)}`);
+                if (step.type === 'relax' || step.type === 'cycle_found') {
+                    isRelaxing = true;
                 }
             }
         }
 
+        logHTML += textLogHTML;
         resultLog.innerHTML = logHTML;
         resultLog.scrollTop = resultLog.scrollHeight;
 
@@ -1108,26 +1592,24 @@ function visualizeBellmanFord(graphName, startNodeId, container, nodes, edges, s
         }
     };
 
-    const rect = container.getBoundingClientRect();
-    const playback = new GraphPlaybackController(svg, totalSteps, container,
-        {
-            onPlay: startLoop,
-            onPause: stopLoop,
-            onSeek: (step) => {
-                currentStep = step;
-                renderGraphState(currentStep, false);
-            },
-            onSpeedChange: () => {
-                if (playInterval) {
-                    stopLoop();
-                    startLoop();
-                }
-            },
-            onEnd: () => {
+    const playback = new GraphPlaybackController(svg, totalSteps, container, {
+        onPlay: startLoop,
+        onPause: stopLoop,
+        onSeek: (step) => {
+            currentStep = step;
+            renderGraphState(currentStep, false);
+        },
+        onSpeedChange: () => {
+            if (playInterval) {
                 stopLoop();
-                renderGraphState(0, false);
+                startLoop();
             }
-        });
+        },
+        onEnd: () => {
+            stopLoop();
+            renderGraphState(0, false);
+        }
+    });
 
     startLoop();
     renderGraphState(0, false);
@@ -1198,79 +1680,159 @@ function visualizeMSTKruskal(graphName, container, nodes, edges, svg, arrowId) {
     }
 
     const animationSteps = [];
-    animationSteps.push({ type: 'start', edgeCount: sortedEdges.length });
+    let mstEdgesState = [];
+    let uState = null, vState = null, wState = null;
+
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            w: wState,
+            mstEdges: [...mstEdgesState],
+            ...extras
+        });
+    };
+
+    pushStep('control', 2); // mst = []
+    pushStep('control', 3); // edges = sorted(...)
+    pushStep('control', 4); // uf = UnionFind(...)
+
+    animationSteps.push({ type: 'start', line: 4, edgeCount: sortedEdges.length, u: null, v: null, w: null, mstEdges: [] });
 
     let edgesAccepted = 0;
 
-    // Process sorted edges
     for (const edge of sortedEdges) {
         if (edgesAccepted >= V - 1) break;
 
         const { u, v, weight } = edge;
-        animationSteps.push({ type: 'eval', u: u, v: v, w: weight });
+        uState = u;
+        vState = v;
+        wState = weight;
 
-        // Check if adding this edge creates a cycle
+        pushStep('control', 5); // for u, v, w in edges:
+        animationSteps.push({ type: 'eval', line: 5, u: u, v: v, w: weight, mstEdges: [...mstEdgesState] });
+
+        pushStep('control', 6); // if uf.find(u) != uf.find(v):
         if (find(u) === find(v)) {
-            animationSteps.push({ type: 'reject', u: u, v: v, w: weight });
+            animationSteps.push({ type: 'reject', line: 6, u: u, v: v, w: weight, mstEdges: [...mstEdgesState] });
         } else {
             union(u, v);
             edgesAccepted++;
-            animationSteps.push({ type: 'accept', u: u, v: v, w: weight });
+            mstEdgesState.push(`(${u},${v})`);
+            
+            pushStep('control', 7); // uf.union(u, v)
+            
+            pushStep('control', 8); // mst.append(...)
+            animationSteps.push({ type: 'accept', line: 8, u: u, v: v, w: weight, mstEdges: [...mstEdgesState] });
+            
+            pushStep('control', 9); // if len(mst) == len(graph.nodes) - 1:
+            if (edgesAccepted === V - 1) {
+                pushStep('control', 10); // break
+                break;
+            }
         }
     }
 
+    uState = null; vState = null; wState = null;
+    pushStep('control', null);
+
     if (edgesAccepted === V - 1) {
-        animationSteps.push({ type: 'complete' });
+        animationSteps.push({ type: 'complete', line: null, mstEdges: [...mstEdgesState], u: null, v: null, w: null });
     }
 
-    // Playback State Variables
     const totalSteps = animationSteps.length;
     const BASE_DELAY = 600;
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">kruskal</span>(graph):`,
+        `    mst = []`,
+        `    edges = <span style="color: #56b6c2;">sorted</span>(graph.edges, key=<span style="color: #c678dd;">lambda</span> e: e.weight)`,
+        `    uf = <span style="color: #e5c07b;">UnionFind</span>(graph.nodes)`,
+        `    <span style="color: #c678dd;">for</span> u, v, w <span style="color: #c678dd;">in</span> edges:`,
+        `        <span style="color: #c678dd;">if</span> uf.<span style="color: #61afef;">find</span>(u) != uf.<span style="color: #61afef;">find</span>(v):`,
+        `            uf.<span style="color: #61afef;">union</span>(u, v)`,
+        `            mst.<span style="color: #61afef;">append</span>((u, v, w))`,
+        `            <span style="color: #c678dd;">if</span> <span style="color: #56b6c2;">len</span>(mst) == <span style="color: #56b6c2;">len</span>(graph.nodes) - <span style="color: #d19a66;">1</span>:`,
+        `                <span style="color: #c678dd;">break</span>`
+    ];
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Kruskal's MST on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const wVar = stepData && stepData.w !== null ? stepData.w : 'None';
+        const mstEdgesVar = stepData ? '[' + stepData.mstEdges.join(', ') + ']' : '[]';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">w:</span> <span style="color: #d19a66; font-weight: bold;">${wVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">mst:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${mstEdgesVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         const mstEdges = new Set();
         const mstNodes = new Set();
         let evaluatingEdge = null;
         let rejectEdge = null;
-
-        let logHTML = `<h3 style="color: #ff8a65;">Kruskal's MST on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
         let totalWeight = 0;
+
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'start') {
-                logHTML += `<div>Sorted ${step.edgeCount} edges by weight. Processing from lowest to highest.</div><br>`;
+                textLogHTML += `<div>Sorted ${step.edgeCount} edges by weight. Processing from lowest to highest.</div><br>`;
             } else if (step.type === 'eval') {
-                logHTML += `<div>Evaluating edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                textLogHTML += `<div>Evaluating edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
+                if (idx === targetStep - 1) evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'accept') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Nodes ${step.u} and ${step.v} connected.</div>`;
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Nodes ${step.u} and ${step.v} connected.</div>`;
                 mstEdges.add(`${safe(step.u)}-${safe(step.v)}`);
                 mstEdges.add(`${safe(step.v)}-${safe(step.u)}`);
                 mstNodes.add(safe(step.u));
                 mstNodes.add(safe(step.v));
                 totalWeight += step.w;
-                logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
-                evaluatingEdge = null;
+                textLogHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
             } else if (step.type === 'reject') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Edge creates a cycle.</div><br>`;
-                rejectEdge = `${safe(step.u)}-${safe(step.v)}`;
-                evaluatingEdge = null;
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Edge creates a cycle.</div><br>`;
+                if (idx === targetStep - 1) rejectEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'complete') {
-                logHTML += `<div style="color: #ff8a65; margin-top: 10px; font-weight: bold;">MST Complete! Total Weight: ${totalWeight}</div>`;
-            }
-
-            // Clear ephemeral styles on previous steps
-            if (idx !== targetStep - 1) {
-                evaluatingEdge = null;
-                rejectEdge = null;
+                textLogHTML += `<div style="color: #ff8a65; margin-top: 10px; font-weight: bold;">MST Complete! Total Weight: ${totalWeight}</div>`;
             }
         }
 
+        logHTML += textLogHTML;
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
             resultLog.scrollTop = resultLog.scrollHeight;
@@ -1404,52 +1966,89 @@ function visualizeMSTPrim(graphName, container, nodes, edges, svg, arrowId) {
         adj[v].push({ to: u, weight: w });
     });
 
-    const animationSteps = [];
-
-    // Auto-select the first node to begin the tree
     const startNode = nodeIds[0];
-    const visited = new Set([startNode]);
-    animationSteps.push({ type: 'start', node: startNode });
+
+    const animationSteps = [];
+    let visitedState = new Set([startNode]);
+    let mstEdgesState = [];
+    let uState = null, vState = null, wState = null;
 
     const pq = new PriorityQueue();
     adj[startNode].forEach(edge => {
         pq.enqueue({ u: startNode, v: edge.to, weight: edge.weight }, edge.weight);
     });
-    animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.v}(${i.priority})`);
+
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            w: wState,
+            visited: Array.from(visitedState),
+            mstEdges: [...mstEdgesState],
+            pqState: pq.items.map(i => `${i.element.v}(${i.priority})`),
+            ...extras
+        });
+    };
+
+    pushStep('control', 2); // mst = []
+    pushStep('control', 3); // visited = set([start])
+    pushStep('control', 4); // edges = ...
+    pushStep('control', 5); // heapq.heapify(edges)
+
+    animationSteps.push({ type: 'start', line: 5, node: startNode, u: null, v: null, w: null, visited: Array.from(visitedState), mstEdges: [], pqState: pq.items.map(i => `${i.element.v}(${i.priority})`) });
 
     let edgesAccepted = 0;
 
     while (!pq.isEmpty() && edgesAccepted < V - 1) {
+        pushStep('control', 6); // while edges and len(visited) < len(graph.nodes):
+        
         const { element } = pq.dequeue();
         const { u, v, weight } = element;
+        uState = u;
+        vState = v;
+        wState = weight;
 
-        animationSteps.push({ type: 'eval', u: u, v: v, w: weight });
+        pushStep('control', 7); // u, v, w = heapq.heappop(edges)
+        animationSteps.push({ type: 'eval', line: 7, u: u, v: v, w: weight, visited: Array.from(visitedState), mstEdges: [...mstEdgesState], pqState: pq.items.map(i => `${i.element.v}(${i.priority})`) });
 
-        // If both nodes are already in the MST, skip (cycle)
-        if (visited.has(u) && visited.has(v)) {
-            animationSteps.push({ type: 'reject', u: u, v: v, w: weight });
+        pushStep('control', 8); // if v not in visited:
+        if (visitedState.has(v) && visitedState.has(u)) {
+            animationSteps.push({ type: 'reject', line: 8, u: u, v: v, w: weight, visited: Array.from(visitedState), mstEdges: [...mstEdgesState], pqState: pq.items.map(i => `${i.element.v}(${i.priority})`) });
             continue;
         }
 
-        // Accept the edge and add the unvisited node
-        const newNode = visited.has(u) ? v : u;
-        visited.add(newNode);
+        const newNode = visitedState.has(u) ? v : u;
+        visitedState.add(newNode);
         edgesAccepted++;
+        mstEdgesState.push(`(${u},${v})`);
 
-        animationSteps.push({ type: 'accept', u: u, v: v, w: weight, newNode: newNode });
+        pushStep('control', 9); // visited.add(v)
+        pushStep('control', 10); // mst.append((u, v, w))
+        
+        animationSteps.push({ type: 'accept', line: 10, u: u, v: v, w: weight, newNode: newNode, visited: Array.from(visitedState), mstEdges: [...mstEdgesState], pqState: pq.items.map(i => `${i.element.v}(${i.priority})`) });
 
-        if (edgesAccepted === V - 1) {
-            animationSteps.push({ type: 'complete' });
-            break;
-        }
-
-        // Enqueue neighbors of the newly added node
+        pushStep('control', 11); // for next_v, next_w in graph.adj[v]:
         adj[newNode].forEach(edge => {
-            if (!visited.has(edge.to)) {
+            if (!visitedState.has(edge.to)) {
+                pushStep('control', 12); // if next_v not in visited:
                 pq.enqueue({ u: newNode, v: edge.to, weight: edge.weight }, edge.weight);
+                pushStep('control', 13); // heapq.heappush(edges, ...)
             }
         });
-        animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.v}(${i.priority})`);
+
+        if (edgesAccepted === V - 1) {
+            pushStep('control', 6); // While condition evaluates to false
+            break;
+        }
+    }
+
+    uState = null; vState = null; wState = null;
+    pushStep('control', null);
+
+    if (edgesAccepted === V - 1) {
+        animationSteps.push({ type: 'complete', line: null, u: null, v: null, w: null, visited: Array.from(visitedState), mstEdges: [...mstEdgesState], pqState: pq.items.map(i => `${i.element.v}(${i.priority})`) });
     }
 
     const totalSteps = animationSteps.length;
@@ -1457,54 +2056,104 @@ function visualizeMSTPrim(graphName, container, nodes, edges, svg, arrowId) {
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">prim</span>(graph, start):`,
+        `    mst = []`,
+        `    visited = <span style="color: #56b6c2;">set</span>([start])`,
+        `    edges = [(start, v, w) <span style="color: #c678dd;">for</span> v, w <span style="color: #c678dd;">in</span> graph.adj[start]]`,
+        `    heapq.<span style="color: #61afef;">heapify</span>(edges)`,
+        `    <span style="color: #c678dd;">while</span> edges <span style="color: #c678dd;">and</span> <span style="color: #56b6c2;">len</span>(visited) <span style="color: #56b6c2;">&lt;</span> <span style="color: #56b6c2;">len</span>(graph.nodes):`,
+        `        u, v, w = heapq.<span style="color: #61afef;">heappop</span>(edges)`,
+        `        <span style="color: #c678dd;">if</span> v <span style="color: #c678dd;">not in</span> visited:`,
+        `            visited.<span style="color: #61afef;">add</span>(v)`,
+        `            mst.<span style="color: #61afef;">append</span>((u, v, w))`,
+        `            <span style="color: #c678dd;">for</span> next_v, next_w <span style="color: #c678dd;">in</span> graph.adj[v]:`,
+        `                <span style="color: #c678dd;">if</span> next_v <span style="color: #c678dd;">not in</span> visited:`,
+        `                    heapq.<span style="color: #61afef;">heappush</span>(edges, (v, next_v, next_w))`
+    ];
+
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Prim's MST on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const wVar = stepData && stepData.w !== null ? stepData.w : 'None';
+        const mstEdgesVar = stepData ? '[' + stepData.mstEdges.join(', ') + ']' : '[]';
+        const visitedVar = stepData ? '{' + stepData.visited.join(', ') + '}' : '{}';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">w:</span> <span style="color: #d19a66; font-weight: bold;">${wVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">visited:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${visitedVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">mst:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${mstEdgesVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         const mstEdges = new Set();
         const mstNodes = new Set();
         let evaluatingEdge = null;
         let rejectEdge = null;
-
-        let logHTML = `<h3 style="color: #ff8a65;">Prim's MST on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
         let totalWeight = 0;
+
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'start') {
-                logHTML += `<div>Started growing tree from node <span style="color: #ff8a65">${step.node}</span></div>`;
+                textLogHTML += `<div>Started growing tree from node <span style="color: #ff8a65">${step.node}</span></div>`;
                 if (step.pqState) {
-                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
+                    textLogHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
                 }
-                logHTML += `<br>`;
+                textLogHTML += `<br>`;
                 mstNodes.add(safe(step.node));
             } else if (step.type === 'eval') {
-                logHTML += `<div>Evaluating frontier edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                textLogHTML += `<div>Evaluating frontier edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
+                if (idx === targetStep - 1) evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'accept') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Added node ${step.newNode} to MST.</div>`;
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Added node ${step.newNode} to MST.</div>`;
                 mstEdges.add(`${safe(step.u)}-${safe(step.v)}`);
                 mstEdges.add(`${safe(step.v)}-${safe(step.u)}`);
                 mstNodes.add(safe(step.u));
                 mstNodes.add(safe(step.v));
                 totalWeight += step.w;
                 if (step.pqState) {
-                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
+                    textLogHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
                 }
-                logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
-                evaluatingEdge = null;
+                textLogHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
             } else if (step.type === 'reject') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Both nodes already in MST.</div><br>`;
-                rejectEdge = `${safe(step.u)}-${safe(step.v)}`;
-                evaluatingEdge = null;
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Both nodes already in MST.</div><br>`;
+                if (idx === targetStep - 1) rejectEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'complete') {
-                logHTML += `<div style="color: #ff8a65; margin-top: 10px; font-weight: bold;">MST Complete! Total Weight: ${totalWeight}</div>`;
-            }
-
-            if (idx !== targetStep - 1) {
-                evaluatingEdge = null;
-                rejectEdge = null;
+                textLogHTML += `<div style="color: #ff8a65; margin-top: 10px; font-weight: bold;">MST Complete! Total Weight: ${totalWeight}</div>`;
             }
         }
 
+        logHTML += textLogHTML;
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
             resultLog.scrollTop = resultLog.scrollHeight;
@@ -1612,7 +2261,6 @@ function visualizeTopologicalSort(graphName, container, nodes, edges, svg, arrow
         originalNodeColors.set(safe(d.id), d3.select(this).attr("fill"));
     });
 
-
     // Block user interactions with the graph during visualization
     svg.select('#interaction-blocker').remove();
     svg.append('style')
@@ -1640,97 +2288,200 @@ function visualizeTopologicalSort(graphName, container, nodes, edges, svg, arrow
     });
 
     const animationSteps = [];
+    
+    let uState = null;
+    let vState = null;
+    let inDegreeState = { ...inDegree };
     const queue = [];
+    const sortedOrder = [];
+    
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            q: [...queue],
+            topoOrder: [...sortedOrder],
+            inDegree: { ...inDegreeState },
+            ...extras
+        });
+    };
 
+    pushStep('control', 2); // in_degree = {u: 0 ...}
+    pushStep('control', 3); // for u, v in graph.edges:
+    pushStep('control', 4); // in_degree[v] += 1
+    
     // Find all nodes with 0 in-degree
     nodeIds.forEach(id => {
         if (inDegree[id] === 0) queue.push(id);
     });
 
-    animationSteps.push({ type: 'init', initialQueue: [...queue] });
+    pushStep('control', 5); // q = deque(...)
+    pushStep('control', 6); // topo_order = []
+    
+    animationSteps.push({ type: 'init', line: 6, initialQueue: [...queue], u: null, v: null, q: [...queue], topoOrder: [], inDegree: {...inDegreeState} });
 
     let processedCount = 0;
-    const sortedOrder = [];
 
     // Process the queue (Kahn's Algorithm)
     while (queue.length > 0) {
+        pushStep('control', 7); // while q:
+        
         const u = queue.shift();
+        uState = u;
+        vState = null;
+        
         sortedOrder.push(u);
         processedCount++;
 
-        animationSteps.push({ type: 'process_node', u: u, currentOrder: [...sortedOrder] });
+        pushStep('control', 8); // u = q.popleft()
+        pushStep('control', 9); // topo_order.append(u)
+        animationSteps.push({ type: 'process_node', line: 9, u: u, currentOrder: [...sortedOrder], q: [...queue], topoOrder: [...sortedOrder], inDegree: {...inDegreeState}, v: null });
 
+        pushStep('control', 10); // for v in graph.adj[u]:
         adj[u].forEach(v => {
-            animationSteps.push({ type: 'eval_edge', u: u, v: v });
+            vState = v;
+            animationSteps.push({ type: 'eval_edge', line: 10, u: u, v: v, q: [...queue], topoOrder: [...sortedOrder], inDegree: {...inDegreeState} });
 
             inDegree[v]--;
+            inDegreeState[v] = inDegree[v];
+            pushStep('control', 11); // in_degree[v] -= 1
+            
+            pushStep('control', 12); // if in_degree[v] == 0:
             if (inDegree[v] === 0) {
                 queue.push(v);
-                animationSteps.push({ type: 'enqueue', v: v });
+                pushStep('control', 13); // q.append(v)
+                animationSteps.push({ type: 'enqueue', line: 13, v: v, u: u, q: [...queue], topoOrder: [...sortedOrder], inDegree: {...inDegreeState} });
             }
         });
     }
 
+    pushStep('control', 7); // loop condition fails
+    pushStep('control', 14); // if len(topo_order) != len(graph.nodes):
+
+    uState = null;
+    vState = null;
+
     // Check for cycles
     if (processedCount !== V) {
-        animationSteps.push({ type: 'cycle_error' });
+        pushStep('control', 15); // print("Cycle detected")
+        animationSteps.push({ type: 'cycle_error', line: 15, q: [...queue], topoOrder: [...sortedOrder], inDegree: {...inDegreeState}, u: null, v: null });
     } else {
-        animationSteps.push({ type: 'complete', finalOrder: sortedOrder });
+        pushStep('control', null);
+        animationSteps.push({ type: 'complete', line: null, finalOrder: sortedOrder, q: [...queue], topoOrder: [...sortedOrder], inDegree: {...inDegreeState}, u: null, v: null });
     }
 
-    // Playback State Variables
     const totalSteps = animationSteps.length;
     const BASE_DELAY = 600;
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">kahn_topo_sort</span>(graph):`,
+        `    in_degree = {u: <span style="color: #d19a66;">0</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    <span style="color: #c678dd;">for</span> u, v <span style="color: #c678dd;">in</span> graph.edges:`,
+        `        in_degree[v] += <span style="color: #d19a66;">1</span>`,
+        `    q = <span style="color: #56b6c2;">deque</span>([u <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes <span style="color: #c678dd;">if</span> in_degree[u] == <span style="color: #d19a66;">0</span>])`,
+        `    topo_order = []`,
+        `    <span style="color: #c678dd;">while</span> q:`,
+        `        u = q.<span style="color: #61afef;">popleft</span>()`,
+        `        topo_order.<span style="color: #61afef;">append</span>(u)`,
+        `        <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `            in_degree[v] -= <span style="color: #d19a66;">1</span>`,
+        `            <span style="color: #c678dd;">if</span> in_degree[v] == <span style="color: #d19a66;">0</span>:`,
+        `                q.<span style="color: #61afef;">append</span>(v)`,
+        `    <span style="color: #c678dd;">if</span> <span style="color: #56b6c2;">len</span>(topo_order) != <span style="color: #56b6c2;">len</span>(graph.nodes):`,
+        `        <span style="color: #61afef;">print</span>(<span style="color: #98c379;">"Cycle detected"</span>)`
+    ];
+
+    const formatInDegree = (indeg) => {
+        let items = [];
+        for (let k in indeg) items.push(`${k}: ${indeg[k]}`);
+        return '{' + items.join(', ') + '}';
+    };
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Topological Sort (Kahn's) on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const qVar = stepData ? '[' + stepData.q.join(', ') + ']' : '[]';
+        const topoOrderVar = stepData ? '[' + stepData.topoOrder.join(', ') + ']' : '[]';
+        const inDegreeVar = stepData ? formatInDegree(stepData.inDegree) : '{}';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">q:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${qVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">topo_order:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${topoOrderVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">in_degree:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${inDegreeVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         const completedNodes = new Set();
         let evaluatingNode = null;
         let evaluatingEdge = null;
         let enqueueNode = null;
-
-        let logHTML = `<h3 style="color: #ff8a65;">Topological Sort (Kahn's) on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
         let currentTopoOrder = [];
+
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'init') {
-                logHTML += `<div><strong>Initialization:</strong> Nodes with 0 in-degree: [ <span style="color: #a3bf60">${step.initialQueue.join(', ')}</span> ]</div><br>`;
+                textLogHTML += `<div><strong>Initialization:</strong> Nodes with 0 in-degree: [ <span style="color: #a3bf60">${step.initialQueue.join(', ')}</span> ]</div><br>`;
             } else if (step.type === 'process_node') {
-                logHTML += `<div>Processing node <span style="color: #ff8a65">${step.u}</span>...</div>`;
-                evaluatingNode = safe(step.u);
+                textLogHTML += `<div>Processing node <span style="color: #ff8a65">${step.u}</span>...</div>`;
+                if (idx === targetStep - 1) evaluatingNode = safe(step.u);
                 completedNodes.add(safe(step.u));
                 currentTopoOrder = step.currentOrder;
             } else if (step.type === 'eval_edge') {
-                logHTML += `<div style="padding-left: 10px;">↳ Removing edge <span style="color: #ff8a65">${step.u} &rarr; ${step.v}</span> (Decrements ${step.v}'s in-degree)</div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                textLogHTML += `<div style="padding-left: 10px;">↳ Removing edge <span style="color: #ff8a65">${step.u} &rarr; ${step.v}</span> (Decrements ${step.v}'s in-degree)</div>`;
+                if (idx === targetStep - 1) evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'enqueue') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Node ${step.v} now has 0 in-degree. Added to queue!</div>`;
-                enqueueNode = safe(step.v);
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Node ${step.v} now has 0 in-degree. Added to queue!</div>`;
+                if (idx === targetStep - 1) enqueueNode = safe(step.v);
             } else if (step.type === 'cycle_error') {
-                logHTML += `<br><div style="color: #e74c3c; font-weight: bold;">Error: Cycle detected! A valid topological ordering is impossible.</div>`;
+                textLogHTML += `<br><div style="color: #e74c3c; font-weight: bold;">Error: Cycle detected! A valid topological ordering is impossible.</div>`;
             } else if (step.type === 'complete') {
-                logHTML += `<br><div style="color: #ff8a65; font-weight: bold;">Sort Complete!</div>`;
-            }
-
-            // Reset ephemeral visual states if we aren't on the exact frame
-            if (idx !== targetStep - 1) {
-                evaluatingNode = null;
-                evaluatingEdge = null;
-                enqueueNode = null;
+                textLogHTML += `<br><div style="color: #ff8a65; font-weight: bold;">Sort Complete!</div>`;
             }
         }
 
         // Always show the running topological order at the bottom
         if (targetStep > 0 && currentTopoOrder.length > 0) {
-            logHTML += `<div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-left: 3px solid #ff8a65;">
+            textLogHTML += `<div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-left: 3px solid #ff8a65;">
                 <strong>Current Order:</strong> <span style="color: #a3bf60">[ ${currentTopoOrder.join(' &rarr; ')} ]</span>
             </div>`;
         }
 
+        logHTML += textLogHTML;
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
             resultLog.scrollTop = resultLog.scrollHeight;
@@ -1877,67 +2628,156 @@ function visualizeSCCKosaraju(graphName, container, nodes, edges, svg, arrowId, 
     });
 
     const animationSteps = [];
-    const stack = [];
-    const visited = new Set();
-    let sccCount = 0;
+    
+    let visitedState = new Set();
+    let stackState = [];
+    let sccsState = [];
+    let phase = 1;
+    let uState = null;
+    let vState = null;
+    
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            phase: phase,
+            visited: Array.from(visitedState),
+            stack: [...stackState],
+            sccs: JSON.parse(JSON.stringify(sccsState)),
+            ...extras
+        });
+    };
 
+    pushStep('control', 2); // visited = set()
+    pushStep('control', 3); // stack = []
+    
     // Phase 1: DFS on original graph to determine finish times
     function dfs1(at) {
-        visited.add(at);
-        animationSteps.push({ type: 'p1_visit', u: at });
+        let prevU = uState;
+        let prevV = vState;
+        uState = at;
+        vState = null;
+        
+        visitedState.add(at);
+        pushStep('control', 5); // visited.add(u)
+        animationSteps.push({ type: 'p1_visit', line: 5, u: at, v: null, phase: 1, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
 
+        pushStep('control', 6); // for v in graph.adj[u]:
         for (const to of adj[at]) {
-            animationSteps.push({ type: 'p1_eval', u: at, v: to });
-            if (!visited.has(to)) {
+            vState = to;
+            animationSteps.push({ type: 'p1_eval', line: 6, u: at, v: to, phase: 1, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
+
+            pushStep('control', 7); // if v not in visited:
+            if (!visitedState.has(to)) {
+                pushStep('control', 8); // dfs1(v)
                 dfs1(to);
+                uState = at; // Restore u after child DFS returns
+                pushStep('control', 6); // Back to loop
             }
         }
-
-        stack.push(at);
-        animationSteps.push({ type: 'p1_finish', u: at });
+        
+        vState = null;
+        stackState.push(at);
+        pushStep('control', 9); // stack.append(u)
+        animationSteps.push({ type: 'p1_finish', line: 9, u: at, v: null, phase: 1, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
+        
+        uState = prevU;
+        vState = prevV;
     }
 
+    pushStep('control', 10); // for node in graph.nodes:
     for (const node of nodeIds) {
-        if (!visited.has(node)) {
+        pushStep('control', 11); // if node not in visited:
+        if (!visitedState.has(node)) {
+            pushStep('control', 12); // dfs1(node)
             dfs1(node);
+            pushStep('control', 10); // Back to loop
         }
     }
+
+    visitedState.clear();
+    pushStep('control', 13); // visited.clear()
+    
+    pushStep('control', 14); // sccs = []
 
     // Record the transition phase between DFS passes
-    animationSteps.push({ type: 'transpose', finalStack: [...stack] });
-
-    // Phase 2: DFS on transposed graph in decreasing finish time
-    visited.clear();
+    phase = 2;
+    animationSteps.push({ type: 'transpose', line: 14, finalStack: [...stackState], u: null, v: null, phase: 2, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
 
     function dfs2(at, currentScc) {
-        visited.add(at);
+        let prevU = uState;
+        let prevV = vState;
+        uState = at;
+        vState = null;
+        
+        visitedState.add(at);
         currentScc.push(at);
-        animationSteps.push({ type: 'p2_visit', u: at });
+        
+        pushStep('control', 16); // visited.add(u)
+        pushStep('control', 17); // current_scc.append(u)
+        
+        animationSteps.push({ type: 'p2_visit', line: 17, u: at, v: null, phase: 2, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
 
+        pushStep('control', 18); // for v in graph.rev_adj[u]:
         for (const to of revAdj[at]) {
-            animationSteps.push({ type: 'p2_eval', u: at, v: to });
-            if (!visited.has(to)) {
+            vState = to;
+            animationSteps.push({ type: 'p2_eval', line: 18, u: at, v: to, phase: 2, visited: Array.from(visitedState), stack: [...stackState], sccs: JSON.parse(JSON.stringify(sccsState)) });
+            
+            pushStep('control', 19); // if v not in visited:
+            if (!visitedState.has(to)) {
+                pushStep('control', 20); // dfs2(v, current_scc)
                 dfs2(to, currentScc);
+                uState = at; // Restore u
+                pushStep('control', 18); // Back to loop
             }
         }
+        
+        uState = prevU;
+        vState = prevV;
     }
 
-    const workingStack = [...stack];
-    while (workingStack.length > 0) {
-        const node = workingStack.pop();
-        if (!visited.has(node)) {
+    let sccCount = 0;
+
+    pushStep('control', 21); // while stack:
+    while (stackState.length > 0) {
+        const node = stackState.pop();
+        uState = node;
+        vState = null;
+        pushStep('control', 22); // u = stack.pop()
+        
+        pushStep('control', 23); // if u not in visited:
+        if (!visitedState.has(node)) {
             const sccNodes = [];
+            pushStep('control', 24); // scc = []
+            pushStep('control', 25); // dfs2(u, scc)
             dfs2(node, sccNodes);
 
+            sccsState.push(sccNodes);
+            pushStep('control', 26); // sccs.append(scc)
+            
             animationSteps.push({
                 type: 'scc_found',
+                line: 26,
                 root: node,
                 nodes: sccNodes,
-                sccIndex: sccCount
+                sccIndex: sccCount,
+                u: node,
+                v: null,
+                phase: 2,
+                visited: Array.from(visitedState),
+                stack: [...stackState],
+                sccs: JSON.parse(JSON.stringify(sccsState))
             });
             sccCount++;
         }
+        pushStep('control', 21); // back to while
     }
+    
+    uState = null;
+    vState = null;
+    pushStep('control', 27); // return sccs
 
     // Playback State Variables
     const totalSteps = animationSteps.length;
@@ -1945,60 +2785,134 @@ function visualizeSCCKosaraju(graphName, container, nodes, edges, svg, arrowId, 
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">kosaraju</span>(graph):`,
+        `    visited = <span style="color: #56b6c2;">set</span>()`,
+        `    stack = []`,
+        `    <span style="color: #c678dd;">def</span> <span style="color: #61afef;">dfs1</span>(u):`,
+        `        visited.<span style="color: #61afef;">add</span>(u)`,
+        `        <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `            <span style="color: #c678dd;">if</span> v <span style="color: #c678dd;">not in</span> visited:`,
+        `                <span style="color: #61afef;">dfs1</span>(v)`,
+        `        stack.<span style="color: #61afef;">append</span>(u)`,
+        `    <span style="color: #c678dd;">for</span> node <span style="color: #c678dd;">in</span> graph.nodes:`,
+        `        <span style="color: #c678dd;">if</span> node <span style="color: #c678dd;">not in</span> visited:`,
+        `            <span style="color: #61afef;">dfs1</span>(node)`,
+        `    visited.<span style="color: #61afef;">clear</span>()`,
+        `    sccs = []`,
+        `    <span style="color: #c678dd;">def</span> <span style="color: #61afef;">dfs2</span>(u, current_scc):`,
+        `        visited.<span style="color: #61afef;">add</span>(u)`,
+        `        current_scc.<span style="color: #61afef;">append</span>(u)`,
+        `        <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.rev_adj[u]:`,
+        `            <span style="color: #c678dd;">if</span> v <span style="color: #c678dd;">not in</span> visited:`,
+        `                <span style="color: #61afef;">dfs2</span>(v, current_scc)`,
+        `    <span style="color: #c678dd;">while</span> stack:`,
+        `        u = stack.<span style="color: #61afef;">pop</span>()`,
+        `        <span style="color: #c678dd;">if</span> u <span style="color: #c678dd;">not in</span> visited:`,
+        `            scc = []`,
+        `            <span style="color: #61afef;">dfs2</span>(u, scc)`,
+        `            sccs.<span style="color: #61afef;">append</span>(scc)`,
+        `    <span style="color: #c678dd;">return</span> sccs`
+    ];
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Kosaraju's SCC on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const phaseVar = stepData ? (stepData.phase === 1 ? 'DFS 1 (Original)' : 'DFS 2 (Transposed)') : 'DFS 1 (Original)';
+        const visitedVar = stepData ? '{' + stepData.visited.join(', ') + '}' : '{}';
+        const stackVar = stepData ? '[' + stepData.stack.join(', ') + ']' : '[]';
+        
+        let sccsStr = '[]';
+        if (stepData && stepData.sccs.length > 0) {
+            sccsStr = '[' + stepData.sccs.map(scc => '[' + scc.join(', ') + ']').join(', ') + ']';
+        }
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">Phase:</span> <span style="color: #c678dd; font-weight: bold;">${phaseVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">stack:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${stackVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">visited:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${visitedVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">sccs:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${sccsStr}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         let currentPhase = 1;
         let finishedNodesP1 = new Set();
         let resolvedSCCs = {};
         let evaluatingEdge = null;
         let activeNode = null;
 
-        let logHTML = `<h3 style="color: #ff8a65;">Kosaraju's SCC on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'p1_visit') {
-                logHTML += `<div>Phase 1: Discovered node <span style="color: #ff8a65">${step.u}</span>.</div>`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div>Phase 1: Discovered node <span style="color: #ff8a65">${step.u}</span>.</div>`;
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'p1_eval') {
-                logHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span>...</div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span>...</div>`;
+                if (idx === targetStep - 1) {
+                    evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                    activeNode = safe(step.u);
+                }
             } else if (step.type === 'p1_finish') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Finished ${step.u}. Added to stack.</div><br>`;
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Finished ${step.u}. Added to stack.</div><br>`;
                 finishedNodesP1.add(safe(step.u));
-                activeNode = null;
             } else if (step.type === 'transpose') {
-                logHTML += `<div style="margin: 15px 0; padding: 10px; background: rgba(255,255,255,0.05); border-left: 3px solid #fff;">
+                textLogHTML += `<div style="margin: 15px 0; padding: 10px; background: rgba(255,255,255,0.05); border-left: 3px solid #fff;">
                     <strong>Phase 2: Graph Transposed!</strong><br>
                     Processing stack: [ <span style="color: #a3bf60">${step.finalStack.slice().reverse().join(', ')}</span> ]
                 </div><br>`;
                 currentPhase = 2;
-                activeNode = null;
             } else if (step.type === 'p2_visit') {
-                logHTML += `<div>Phase 2: Visiting node <span style="color: #ff8a65">${step.u}</span>...</div>`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div>Phase 2: Visiting node <span style="color: #ff8a65">${step.u}</span>...</div>`;
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'p2_eval') {
-                logHTML += `<div style="padding-left: 10px;">Evaluating reverse edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (Original: ${step.v} &rarr; ${step.u})...</div>`;
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating reverse edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (Original: ${step.v} &rarr; ${step.u})...</div>`;
                 // To map the transposed traversal visually to the DOM edge, we swap u and v
-                evaluatingEdge = `${safe(step.v)}-${safe(step.u)}`;
-                activeNode = safe(step.u);
+                if (idx === targetStep - 1) {
+                    evaluatingEdge = `${safe(step.v)}-${safe(step.u)}`;
+                    activeNode = safe(step.u);
+                }
             } else if (step.type === 'scc_found') {
                 const color = disColors[step.sccIndex % disColors.length];
-                logHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${color};">
+                textLogHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${color};">
                     <strong>SCC Found!</strong> Root: ${step.root}. Nodes: [ <span style="color: #a3bf60">${step.nodes.join(', ')}</span> ]
                 </div><br>`;
 
                 step.nodes.forEach(n => resolvedSCCs[safe(n)] = color);
-                activeNode = null;
-            }
-
-            // Reset ephemeral states
-            if (idx !== targetStep - 1) {
-                evaluatingEdge = null;
             }
         }
+
+        logHTML += textLogHTML;
 
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
@@ -2156,64 +3070,144 @@ function visualizeSCCTarjan(graphName, container, nodes, edges, svg, arrowId, di
     const low = {};
     const onStack = new Set();
     const stack = [];
+    const sccsState = [];
+    let uState = null;
+    let vState = null;
 
-    nodeIds.forEach(id => ids[id] = -1); // -1 signifies unvisited
+    nodeIds.forEach(id => { ids[id] = -1; low[id] = -1; }); // -1 signifies unvisited
 
     const animationSteps = [];
     let sccCount = 0;
 
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            stack: [...stack],
+            onStack: Array.from(onStack),
+            ids: { ...ids },
+            low: { ...low },
+            idCounter,
+            sccs: JSON.parse(JSON.stringify(sccsState)),
+            ...extras
+        });
+    };
+
+    pushStep('control', 2); // ids = ...
+    pushStep('control', 3); // low = ...
+    pushStep('control', 4); // on_stack = set()
+    pushStep('control', 5); // stack = []
+    pushStep('control', 6); // id_counter = 0
+    pushStep('control', 7); // sccs = []
+
     // DFS for Tarjan's
     function dfs(at) {
+        let prevU = uState;
+        let prevV = vState;
+        uState = at;
+        vState = null;
+
         stack.push(at);
         onStack.add(at);
         ids[at] = idCounter;
         low[at] = idCounter;
         idCounter++;
 
-        animationSteps.push({ type: 'visit', u: at, id: ids[at], low: low[at], stackState: [...stack] });
+        pushStep('control', 11); // ids[u] = low[u] = id_counter
+        pushStep('control', 12); // id_counter += 1
+        pushStep('control', 13); // stack.append(u)
+        pushStep('control', 14); // on_stack.add(u)
 
+        animationSteps.push({ type: 'visit', line: 14, u: at, v: null, stack: [...stack], onStack: Array.from(onStack), ids: { ...ids }, low: { ...low }, idCounter, sccs: JSON.parse(JSON.stringify(sccsState)) });
+
+        pushStep('control', 16); // for v in graph.adj[u]:
         for (const to of adj[at]) {
-            animationSteps.push({ type: 'eval_edge', u: at, v: to });
+            vState = to;
+            animationSteps.push({ type: 'eval_edge', line: 16, u: at, v: to, stack: [...stack], onStack: Array.from(onStack), ids: { ...ids }, low: { ...low }, idCounter, sccs: JSON.parse(JSON.stringify(sccsState)) });
 
+            pushStep('control', 17); // if ids[v] == -1:
             if (ids[to] === -1) {
                 // Unvisited neighbor
+                pushStep('control', 18); // dfs(v)
                 dfs(to);
+                uState = at;
+                
                 low[at] = Math.min(low[at], low[to]);
-                animationSteps.push({ type: 'update_low', u: at, v: to, newLow: low[at] });
-            } else if (onStack.has(to)) {
-                // Back-edge found
-                low[at] = Math.min(low[at], ids[to]);
-                animationSteps.push({ type: 'update_low_back', u: at, v: to, newLow: low[at] });
+                pushStep('control', 19); // low[u] = min(low[u], low[v])
+                animationSteps.push({ type: 'update_low', line: 19, u: at, v: to, newLow: low[at], stack: [...stack], onStack: Array.from(onStack), ids: { ...ids }, low: { ...low }, idCounter, sccs: JSON.parse(JSON.stringify(sccsState)) });
+            } else {
+                pushStep('control', 20); // elif v in on_stack:
+                if (onStack.has(to)) {
+                    // Back-edge found
+                    low[at] = Math.min(low[at], ids[to]);
+                    pushStep('control', 21); // low[u] = min(low[u], ids[v])
+                    animationSteps.push({ type: 'update_low_back', line: 21, u: at, v: to, newLow: low[at], stack: [...stack], onStack: Array.from(onStack), ids: { ...ids }, low: { ...low }, idCounter, sccs: JSON.parse(JSON.stringify(sccsState)) });
+                }
             }
+            pushStep('control', 16);
         }
+        
+        vState = null;
 
         // Check if we are at the root of an SCC
+        pushStep('control', 23); // if ids[u] == low[u]:
         if (ids[at] === low[at]) {
             const sccNodes = [];
             let node;
+            pushStep('control', 24); // scc = []
+            
             do {
+                pushStep('control', 25); // while True:
                 node = stack.pop();
+                pushStep('control', 26); // node = stack.pop()
                 onStack.delete(node);
+                pushStep('control', 27); // on_stack.remove(node)
                 sccNodes.push(node);
+                pushStep('control', 28); // scc.append(node)
+                pushStep('control', 29); // if node == u: break
             } while (node !== at);
+
+            sccsState.push(sccNodes);
+            pushStep('control', 31); // sccs.append(scc)
 
             animationSteps.push({
                 type: 'scc_found',
+                line: 31,
                 root: at,
                 nodes: sccNodes,
                 sccIndex: sccCount,
-                stackState: [...stack]
+                u: at,
+                v: null,
+                stack: [...stack],
+                onStack: Array.from(onStack),
+                ids: { ...ids },
+                low: { ...low },
+                idCounter,
+                sccs: JSON.parse(JSON.stringify(sccsState))
             });
             sccCount++;
         }
+        
+        uState = prevU;
+        vState = prevV;
     }
 
+    pushStep('control', 33); // for node in graph.nodes:
     // Run Tarjan's on all unvisited nodes
     for (const node of nodeIds) {
+        pushStep('control', 34); // if ids[node] == -1:
         if (ids[node] === -1) {
+            pushStep('control', 35); // dfs(node)
             dfs(node);
+            pushStep('control', 33); // Back to loop
         }
     }
+    
+    uState = null;
+    vState = null;
+    pushStep('control', 37); // return sccs
 
     // Playback State Variables
     const totalSteps = animationSteps.length;
@@ -2221,49 +3215,145 @@ function visualizeSCCTarjan(graphName, container, nodes, edges, svg, arrowId, di
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">tarjan</span>(graph):`,
+        `    ids = {u: -<span style="color: #d19a66;">1</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    low = {u: -<span style="color: #d19a66;">1</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    on_stack = <span style="color: #56b6c2;">set</span>()`,
+        `    stack = []`,
+        `    id_counter = <span style="color: #d19a66;">0</span>`,
+        `    sccs = []`,
+        `    <span style="color: #c678dd;">def</span> <span style="color: #61afef;">dfs</span>(u):`,
+        `        <span style="color: #c678dd;">nonlocal</span> id_counter`,
+        `        ids[u] = low[u] = id_counter`,
+        `        id_counter += <span style="color: #d19a66;">1</span>`,
+        `        stack.<span style="color: #61afef;">append</span>(u)`,
+        `        on_stack.<span style="color: #61afef;">add</span>(u)`,
+        `        <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `            <span style="color: #c678dd;">if</span> ids[v] == -<span style="color: #d19a66;">1</span>:`,
+        `                <span style="color: #61afef;">dfs</span>(v)`,
+        `                low[u] = <span style="color: #56b6c2;">min</span>(low[u], low[v])`,
+        `            <span style="color: #c678dd;">elif</span> v <span style="color: #c678dd;">in</span> on_stack:`,
+        `                low[u] = <span style="color: #56b6c2;">min</span>(low[u], ids[v])`,
+        `        <span style="color: #c678dd;">if</span> ids[u] == low[u]:`,
+        `            scc = []`,
+        `            <span style="color: #c678dd;">while True</span>:`,
+        `                node = stack.<span style="color: #61afef;">pop</span>()`,
+        `                on_stack.<span style="color: #61afef;">remove</span>(node)`,
+        `                scc.<span style="color: #61afef;">append</span>(node)`,
+        `                <span style="color: #c678dd;">if</span> node == u: <span style="color: #c678dd;">break</span>`,
+        `            sccs.<span style="color: #61afef;">append</span>(scc)`,
+        `    <span style="color: #c678dd;">for</span> node <span style="color: #c678dd;">in</span> graph.nodes:`,
+        `        <span style="color: #c678dd;">if</span> ids[node] == -<span style="color: #d19a66;">1</span>:`,
+        `            <span style="color: #61afef;">dfs</span>(node)`,
+        `    <span style="color: #c678dd;">return</span> sccs`
+    ];
+
+    const formatDict = (dict) => {
+        let items = [];
+        for (let k in dict) {
+            if (dict[k] !== -1) items.push(`${k}: ${dict[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
+
+        let logHTML = `<h3 style="color: #ff8a65;">Tarjan's SCC on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const stackVar = stepData ? '[' + stepData.stack.join(', ') + ']' : '[]';
+        const onStackVar = stepData ? '{' + stepData.onStack.join(', ') + '}' : '{}';
+        const idCounterVar = stepData ? stepData.idCounter : '0';
+        const idsVar = stepData ? formatDict(stepData.ids) : '{}';
+        const lowVar = stepData ? formatDict(stepData.low) : '{}';
+
+        let sccsStr = '[]';
+        if (stepData && stepData.sccs.length > 0) {
+            sccsStr = '[' + stepData.sccs.map(scc => '[' + scc.join(', ') + ']').join(', ') + ']';
+        }
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            // 20 is the start of the while loop which encompasses two lines in original representation
+            // We map lines carefully based on our trace pushes.
+            let displayLine = lineNum;
+            if (lineNum >= 22) displayLine = lineNum + 1; // offset because of while true node=stack.pop
+            if (lineNum === 26) displayLine = 29;
+
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">id_counter:</span> <span style="color: #d19a66; font-weight: bold;">${idCounterVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">stack:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${stackVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">on_stack:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${onStackVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">ids:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${idsVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">low:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${lowVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">sccs:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${sccsStr}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
         let currentStack = new Set();
         let resolvedSCCs = {}; // nodeId -> color
         let evaluatingEdge = null;
         let activeNode = null;
-
-        let logHTML = `<h3 style="color: #ff8a65;">Tarjan's SCC on <span style="color: #00759a;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'visit') {
-                logHTML += `<div>Discovered node <span style="color: #ff8a65">${step.u}</span> [id: ${step.id}, low: ${step.low}]. Added to Stack.</div>`;
-                currentStack = new Set(step.stackState.map(safe));
-                activeNode = safe(step.u);
+                textLogHTML += `<div>Discovered node <span style="color: #ff8a65">${step.u}</span> [id: ${step.ids[safe(step.u)]}, low: ${step.low[safe(step.u)]}]. Added to Stack.</div>`;
+                currentStack = new Set(step.stack.map(safe));
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'eval_edge') {
-                logHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span>...</div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span>...</div>`;
+                if (idx === targetStep - 1) {
+                    evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                    activeNode = safe(step.u);
+                }
             } else if (step.type === 'update_low') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Returned from ${step.v}. Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Returned from ${step.v}. Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'update_low_back') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Back-edge to stack node ${step.v}! Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Back-edge to stack node ${step.v}! Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'scc_found') {
-                logHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${disColors[step.sccIndex % disColors.length]};">
+                textLogHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${disColors[step.sccIndex % disColors.length]};">
                     <strong>SCC Found!</strong> Root: ${step.root}. Nodes popped: [ <span style="color: #a3bf60">${step.nodes.join(', ')}</span> ]
                 </div><br>`;
-                currentStack = new Set(step.stackState.map(safe));
+                currentStack = new Set(step.stack.map(safe));
 
                 // Assign color to all nodes in this SCC
                 const color = disColors[step.sccIndex % disColors.length];
                 step.nodes.forEach(n => resolvedSCCs[safe(n)] = color);
-                activeNode = null;
-            }
-
-            // Reset ephemeral state if not on current step
-            if (idx !== targetStep - 1) {
-                evaluatingEdge = null;
             }
         }
+
+        logHTML += textLogHTML;
 
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
@@ -2418,74 +3508,159 @@ function visualizeBCC(graphName, container, nodes, edges, svg, arrowId, directed
     const ids = {};
     const low = {};
     const stack = [];
-    nodeIds.forEach(id => ids[id] = -1);
+    nodeIds.forEach(id => { ids[id] = -1; low[id] = -1; });
+    const bccsState = [];
+    
+    let uState = null;
+    let vState = null;
+    let pState = null;
 
     const animationSteps = [];
     let bccCount = 0;
 
-    function dfs(u, p = null) {
-        idCounter++;
-        ids[u] = low[u] = idCounter;
-        let children = 0;
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            p: pState,
+            stack: [...stack],
+            ids: { ...ids },
+            low: { ...low },
+            idCounter,
+            bccs: JSON.parse(JSON.stringify(bccsState)),
+            ...extras
+        });
+    };
 
-        if (p === null) {
-            animationSteps.push({ type: 'root_found', u: u });
+    pushStep('control', 2); // ids = ...
+    pushStep('control', 3); // low = ...
+    pushStep('control', 4); // id_counter = 0
+    pushStep('control', 5); // stack = []
+    pushStep('control', 6); // bccs = []
+
+    function dfs(at, parent) {
+        let prevU = uState;
+        let prevV = vState;
+        let prevP = pState;
+        uState = at;
+        vState = null;
+        pState = parent;
+
+        idCounter++;
+        pushStep('control', 10); // id_counter += 1
+        
+        ids[at] = low[at] = idCounter;
+        pushStep('control', 11); // ids[u] = low[u] = id_counter
+        
+        let children = 0;
+        pushStep('control', 12); // children = 0
+
+        if (parent === null) {
+            animationSteps.push({ type: 'root_found', line: 12, u: at, u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
         }
 
-        animationSteps.push({ type: 'visit', u: u, id: ids[u], low: low[u] });
+        animationSteps.push({ type: 'visit', line: 12, u: at, id: ids[at], low: low[at], u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
 
-        for (const v of adj[u]) {
-            if (v === p) continue;
+        pushStep('control', 13); // for v in graph.adj[u]:
+        for (const to of adj[at]) {
+            vState = to;
+            
+            pushStep('control', 14); // if v == p: continue
+            if (to === parent) continue;
 
-            if (ids[v] === -1) {
+            pushStep('control', 15); // if ids[v] == -1:
+            if (ids[to] === -1) {
                 children++;
-                stack.push({ u, v });
-                animationSteps.push({ type: 'eval_edge', u: u, v: v, edgeType: 'tree' });
+                pushStep('control', 16); // children += 1
+                
+                stack.push({ u: at, v: to });
+                pushStep('control', 17); // stack.append((u, v))
+                
+                animationSteps.push({ type: 'eval_edge', line: 17, u: at, v: to, edgeType: 'tree', u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
 
-                dfs(v, u);
+                pushStep('control', 18); // dfs(v, u)
+                dfs(to, at);
+                uState = at;
+                pState = parent;
 
-                low[u] = Math.min(low[u], low[v]);
-                animationSteps.push({ type: 'update_low', u: u, v: v, newLow: low[u] });
+                low[at] = Math.min(low[at], low[to]);
+                pushStep('control', 19); // low[u] = min(low[u], low[v])
+                animationSteps.push({ type: 'update_low', line: 19, u: at, v: to, newLow: low[at], u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
 
                 // Articulation Point / BCC check
-                if (low[v] >= ids[u]) {
+                pushStep('control', 20); // if low[v] >= ids[u]:
+                if (low[to] >= ids[at]) {
                     // If it's not the root, it's definitively an AP.
-                    if (p !== null) {
-                        animationSteps.push({ type: 'ap_found', u: u });
+                    if (parent !== null) {
+                        animationSteps.push({ type: 'ap_found', line: 20, u: at, u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
                     }
 
                     const bccEdges = [];
+                    pushStep('control', 21); // bcc_edges = []
+                    
                     let poppedEdge;
                     do {
+                        pushStep('control', 22); // while True:
                         poppedEdge = stack.pop();
+                        pushStep('control', 23); // edge = stack.pop()
                         bccEdges.push(poppedEdge);
-                    } while (!(poppedEdge.u === u && poppedEdge.v === v));
+                        pushStep('control', 24); // bcc_edges.append(edge)
+                        pushStep('control', 25); // if edge == (u, v): break
+                    } while (!(poppedEdge.u === at && poppedEdge.v === to));
+
+                    bccsState.push(bccEdges);
+                    pushStep('control', 26); // bccs.append(bcc_edges)
 
                     animationSteps.push({
                         type: 'bcc_found',
-                        u: u,
+                        line: 26,
+                        u: at,
                         edges: bccEdges,
-                        bccIndex: bccCount
+                        bccIndex: bccCount,
+                        u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState))
                     });
                     bccCount++;
                 }
-            } else if (ids[v] < ids[u]) {
-                stack.push({ u, v });
-                low[u] = Math.min(low[u], ids[v]);
-                animationSteps.push({ type: 'eval_edge', u: u, v: v, edgeType: 'back', newLow: low[u] });
+            } else {
+                pushStep('control', 27); // elif ids[v] < ids[u]:
+                if (ids[to] < ids[at]) {
+                    stack.push({ u: at, v: to });
+                    pushStep('control', 28); // stack.append((u, v))
+                    low[at] = Math.min(low[at], ids[to]);
+                    pushStep('control', 29); // low[u] = min(low[u], ids[v])
+                    animationSteps.push({ type: 'eval_edge', line: 29, u: at, v: to, edgeType: 'back', newLow: low[at], u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
+                }
             }
+            pushStep('control', 13); // loop top
         }
 
         // Special case: DFS Root is an AP only if it has > 1 independent children in the DFS tree
-        if (p === null && children > 1) {
-            animationSteps.push({ type: 'ap_found', u: u, isRootAP: true });
+        if (parent === null && children > 1) {
+            animationSteps.push({ type: 'ap_found', line: 13, u: at, isRootAP: true, u: uState, v: vState, p: pState, stack: [...stack], ids: { ...ids }, low: { ...low }, idCounter, bccs: JSON.parse(JSON.stringify(bccsState)) });
         }
+        
+        uState = prevU;
+        vState = prevV;
+        pState = prevP;
     }
 
+    pushStep('control', 30); // for node in graph.nodes:
     // Run on all unvisited nodes (handles disconnected graphs)
     for (const node of nodeIds) {
-        if (ids[node] === -1) dfs(node);
+        pushStep('control', 31); // if ids[node] == -1:
+        if (ids[node] === -1) {
+            pushStep('control', 32); // dfs(node, None)
+            dfs(node, null);
+            pushStep('control', 30); // loop top
+        }
     }
+    
+    uState = null;
+    vState = null;
+    pState = null;
+    pushStep('control', 33); // return bccs
 
     // Playback State Variables
     const totalSteps = animationSteps.length;
@@ -2493,14 +3668,52 @@ function visualizeBCC(graphName, container, nodes, edges, svg, arrowId, directed
     let currentStep = 0;
     let playInterval = null;
 
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">bcc</span>(graph):`,
+        `    ids = {u: -<span style="color: #d19a66;">1</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    low = {u: -<span style="color: #d19a66;">1</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    id_counter = <span style="color: #d19a66;">0</span>`,
+        `    stack = []`,
+        `    bccs = []`,
+        `    <span style="color: #c678dd;">def</span> <span style="color: #61afef;">dfs</span>(u, p):`,
+        `        <span style="color: #c678dd;">nonlocal</span> id_counter`,
+        `        id_counter += <span style="color: #d19a66;">1</span>`,
+        `        ids[u] = low[u] = id_counter`,
+        `        children = <span style="color: #d19a66;">0</span>`,
+        `        <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `            <span style="color: #c678dd;">if</span> v == p: <span style="color: #c678dd;">continue</span>`,
+        `            <span style="color: #c678dd;">if</span> ids[v] == -<span style="color: #d19a66;">1</span>:`,
+        `                children += <span style="color: #d19a66;">1</span>`,
+        `                stack.<span style="color: #61afef;">append</span>((u, v))`,
+        `                <span style="color: #61afef;">dfs</span>(v, u)`,
+        `                low[u] = <span style="color: #56b6c2;">min</span>(low[u], low[v])`,
+        `                <span style="color: #c678dd;">if</span> low[v] >= ids[u]:`,
+        `                    bcc_edges = []`,
+        `                    <span style="color: #c678dd;">while True</span>:`,
+        `                        edge = stack.<span style="color: #61afef;">pop</span>()`,
+        `                        bcc_edges.<span style="color: #61afef;">append</span>(edge)`,
+        `                        <span style="color: #c678dd;">if</span> edge == (u, v): <span style="color: #c678dd;">break</span>`,
+        `                    bccs.<span style="color: #61afef;">append</span>(bcc_edges)`,
+        `            <span style="color: #c678dd;">elif</span> ids[v] < ids[u]:`,
+        `                stack.<span style="color: #61afef;">append</span>((u, v))`,
+        `                low[u] = <span style="color: #56b6c2;">min</span>(low[u], ids[v])`,
+        `    <span style="color: #c678dd;">for</span> node <span style="color: #c678dd;">in</span> graph.nodes:`,
+        `        <span style="color: #c678dd;">if</span> ids[node] == -<span style="color: #d19a66;">1</span>:`,
+        `            <span style="color: #61afef;">dfs</span>(node, <span style="color: #d19a66;">None</span>)`,
+        `    <span style="color: #c678dd;">return</span> bccs`
+    ];
+
+    const formatDict = (dict) => {
+        let items = [];
+        for (let k in dict) {
+            if (dict[k] !== -1) items.push(`${k}: ${dict[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
+
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
-        let visitedNodes = new Set();
-        let dfsRoots = new Set();
-        let articulationPoints = new Set();
-        let resolvedBCCEdges = {};
-        let evaluatingEdge = null;
-        let activeNode = null;
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
 
         let logHTML = `
             <h3 style="color: #ff8a65;">Hopcroft-Tarjan Biconnected Components on <span style="color: #00759a;">${graphName}</span></h3>
@@ -2512,35 +3725,102 @@ function visualizeBCC(graphName, container, nodes, edges, svg, arrowId, directed
             <div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>
         `;
 
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const pVar = stepData && stepData.p !== null ? stepData.p : 'None';
+        const idCounterVar = stepData ? stepData.idCounter : '0';
+        const idsVar = stepData ? formatDict(stepData.ids) : '{}';
+        const lowVar = stepData ? formatDict(stepData.low) : '{}';
+
+        let stackStr = '[]';
+        if (stepData && stepData.stack.length > 0) {
+            stackStr = '[' + stepData.stack.map(e => `(${e.u},${e.v})`).join(', ') + ']';
+        }
+        let bccsStr = '[]';
+        if (stepData && stepData.bccs.length > 0) {
+            bccsStr = '[' + stepData.bccs.map(bcc => '[' + bcc.map(e => `(${e.u},${e.v})`).join(', ') + ']').join(', ') + ']';
+        }
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            
+            let displayLine = lineNum;
+            // Align mapping
+            if (lineNum >= 9) displayLine = lineNum + 1; // nonlocal id_counter doesn't exist in mapping
+            if (lineNum >= 22) displayLine = lineNum + 1; // while True block offsets
+            if (lineNum === 25) displayLine = 26; 
+
+            const isHighlighted = lineNum === currentLine || displayLine === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">p (parent):</span> <span style="color: #e5c07b; font-weight: bold;">${pVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">id_counter:</span> <span style="color: #d19a66; font-weight: bold;">${idCounterVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">stack:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${stackStr}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">ids:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${idsVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">low:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${lowVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">bccs:</span> <span style="color: #98c379; font-weight: bold; word-break: break-all;">${bccsStr}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+
+        let visitedNodes = new Set();
+        let dfsRoots = new Set();
+        let articulationPoints = new Set();
+        let resolvedBCCEdges = {};
+        let evaluatingEdge = null;
+        let activeNode = null;
+        
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
+
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'root_found') {
-                logHTML += `<div style="color: #9b59b6; font-weight: bold;">Starting new DFS component. Root: ${step.u}</div>`;
+                textLogHTML += `<div style="color: #9b59b6; font-weight: bold;">Starting new DFS component. Root: ${step.u}</div>`;
                 dfsRoots.add(safe(step.u));
             } else if (step.type === 'visit') {
-                logHTML += `<div>Discovered node <span style="color: #ff8a65">${step.u}</span> [id: ${step.id}].</div>`;
+                textLogHTML += `<div>Discovered node <span style="color: #ff8a65">${step.u}</span> [id: ${step.ids[safe(step.u)]}].</div>`;
                 visitedNodes.add(safe(step.u));
-                activeNode = safe(step.u);
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'eval_edge') {
                 const eType = step.edgeType === 'tree' ? 'Tree-edge' : 'Back-edge';
-                logHTML += `<div style="padding-left: 10px;">Evaluating ${eType}: <span style="color: #a3bf60">${step.u} - ${step.v}</span></div>`;
-                evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating ${eType}: <span style="color: #a3bf60">${step.u} - ${step.v}</span></div>`;
+                if (idx === targetStep - 1) {
+                    evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
+                    activeNode = safe(step.u);
+                }
                 if (step.edgeType === 'back') {
-                    logHTML += `<div style="padding-left: 20px; color: #ff8a65;">↳ Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
+                    textLogHTML += `<div style="padding-left: 20px; color: #ff8a65;">↳ Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
                 }
             } else if (step.type === 'update_low') {
-                logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Returned from ${step.v}. Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
-                activeNode = safe(step.u);
+                textLogHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Returned from ${step.v}. Updated ${step.u}'s low-link to ${step.newLow}.</div><br>`;
+                if (idx === targetStep - 1) activeNode = safe(step.u);
             } else if (step.type === 'ap_found') {
                 const reason = step.isRootAP ? "Root with >1 children" : `low[v] >= ids[${step.u}]`;
-                logHTML += `<div style="color: #e67e22; font-weight: bold; margin-top: 5px;">Articulation Point Confirmed: ${step.u} (${reason})</div>`;
+                textLogHTML += `<div style="color: #e67e22; font-weight: bold; margin-top: 5px;">Articulation Point Confirmed: ${step.u} (${reason})</div>`;
                 articulationPoints.add(safe(step.u));
             } else if (step.type === 'bcc_found') {
                 const color = disColors[step.bccIndex % disColors.length];
                 const edgeStrs = step.edges.map(e => `(${e.u}-${e.v})`);
-                logHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${color};">
+                textLogHTML += `<div style="margin-top: 10px; padding: 5px; background: rgba(0,0,0,0.2); border-left: 3px solid ${color};">
                     <strong>BCC Found!</strong> Triggered at ${step.u}.<br>Edges: <span style="color: #a3bf60">${edgeStrs.join(', ')}</span>
                 </div><br>`;
 
@@ -2548,13 +3828,10 @@ function visualizeBCC(graphName, container, nodes, edges, svg, arrowId, directed
                     resolvedBCCEdges[`${safe(e.u)}-${safe(e.v)}`] = color;
                     resolvedBCCEdges[`${safe(e.v)}-${safe(e.u)}`] = color;
                 });
-                activeNode = null;
-            }
-
-            if (idx !== targetStep - 1) {
-                evaluatingEdge = null;
             }
         }
+
+        logHTML += textLogHTML;
 
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
@@ -2694,7 +3971,6 @@ function visualizeFordFulkerson(graphName, startNodeId, sinkNodeId, container, n
         originalNodeColors.set(safe(d.id), d3.select(this).attr("fill"));
     });
 
-
     // Block user interactions with the graph during visualization
     svg.select('#interaction-blocker').remove();
     svg.append('style')
@@ -2738,113 +4014,323 @@ function visualizeFordFulkerson(graphName, startNodeId, sinkNodeId, container, n
     });
 
     const animationSteps = [];
+    
+    // State variables
     let maxFlow = 0;
-
-    animationSteps.push({ type: 'start', source, sink });
-
-    // Classic Ford-Fulkerson Method (using DFS for pathfinding)
-    while (true) {
-        const parent = {};
-        nodeIds.forEach(id => parent[id] = null);
-
-        // STACK implementation for Depth-First Search
-        const stack = [source];
-        parent[source] = source;
-
-        let pathFound = false;
-
-        while (stack.length > 0 && !pathFound) {
-            // LIFO behavior - diving deep into the graph
-            const u = stack.pop();
-
-            for (const v of adj[u]) {
-                const residual = capacity[u][v] - flow[u][v];
-                // If unvisited and has residual capacity
-                if (parent[v] === null && residual > 0) {
-                    parent[v] = u;
-                    if (v === sink) {
-                        pathFound = true;
-                        break;
-                    }
-                    stack.push(v);
-                }
+    let uState = null;
+    let vState = null;
+    let parentState = {};
+    let stackState = [];
+    let pathFoundState = false;
+    let bottleneckState = 'inf';
+    let pathState = [];
+    
+    const copyFlow = () => {
+        const f = {};
+        for (let u of nodeIds) {
+            f[u] = {};
+            for (let v of nodeIds) {
+                f[u][v] = flow[u][v];
             }
         }
+        return f;
+    };
 
-        // If no augmenting path can be found, max flow is reached
-        if (!pathFound) break;
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            parent: { ...parentState },
+            stack: [...stackState],
+            pathFound: pathFoundState,
+            bottleneck: bottleneckState,
+            path: [...pathState],
+            maxFlow,
+            stateFlow: copyFlow(),
+            source,
+            sink,
+            ...extras
+        });
+    };
 
-        // Reconstruct path to find bottleneck (minimum residual capacity)
-        let bottleneck = Infinity;
-        let curr = sink;
-        const pathEdges = [];
+    pushStep('control', 2); // flow = ...
+    pushStep('control', 3); // max_flow = 0
+    animationSteps.push({ type: 'start', line: 3, source, sink, stateFlow: copyFlow(), maxFlow: 0, stack: [], parent: {}, path: [] });
 
-        while (curr !== source) {
-            const p = parent[curr];
-            bottleneck = Math.min(bottleneck, capacity[p][curr] - flow[p][curr]);
-            pathEdges.push({ u: p, v: curr });
-            curr = p;
+    // Classic Ford-Fulkerson Method (using DFS for pathfinding)
+    pushStep('control', 5); // while True:
+    while (true) {
+        nodeIds.forEach(id => parentState[id] = null);
+        pushStep('control', 6); // parent = {u: None for u in graph.nodes}
+        
+        parentState[source] = source;
+        pushStep('control', 7); // parent[source] = source
+        
+        stackState = [source];
+        pushStep('control', 8); // stack = [source]
+        
+        pathFoundState = false;
+        pushStep('control', 9); // path_found = False
+        
+        uState = null;
+        vState = null;
+
+        pushStep('control', 11); // while stack and not path_found:
+        while (stackState.length > 0 && !pathFoundState) {
+            uState = stackState.pop();
+            pushStep('control', 12); // u = stack.pop()
+            
+            animationSteps.push({ type: 'visit', line: 12, u: uState, v: null, stack: [...stackState], parent: { ...parentState }, maxFlow, stateFlow: copyFlow(), source, sink, path: [] });
+
+            pushStep('control', 14); // for v in graph.adj[u]:
+            for (const to of adj[uState]) {
+                vState = to;
+                
+                const residual = capacity[uState][vState] - flow[uState][vState];
+                pushStep('control', 15); // residual = graph.capacity[u][v] - flow[u][v]
+                
+                animationSteps.push({ type: 'eval_edge', line: 15, u: uState, v: vState, residual, stack: [...stackState], parent: { ...parentState }, maxFlow, stateFlow: copyFlow(), source, sink, path: [] });
+
+                pushStep('control', 16); // if parent[v] is None and residual > 0:
+                // If unvisited and has residual capacity
+                if (parentState[vState] === null && residual > 0) {
+                    parentState[vState] = uState;
+                    pushStep('control', 17); // parent[v] = u
+                    
+                    pushStep('control', 18); // if v == sink:
+                    if (vState === sink) {
+                        pathFoundState = true;
+                        pushStep('control', 19); // path_found = True
+                        pushStep('control', 20); // break
+                        break;
+                    }
+                    
+                    stackState.push(vState);
+                    pushStep('control', 21); // stack.append(v)
+                }
+                pushStep('control', 14); // loop top
+            }
+            pushStep('control', 11); // outer loop top
         }
 
-        pathEdges.reverse();
+        uState = null;
+        vState = null;
+
+        pushStep('control', 23); // if not path_found:
+        // If no augmenting path can be found, max flow is reached
+        if (!pathFoundState) {
+            pushStep('control', 24); // break
+            break;
+        }
+
+        bottleneckState = Infinity;
+        pushStep('control', 26); // bottleneck = float('inf')
+        
+        let curr = sink;
+        pushStep('control', 27); // curr = sink
+        
+        pathState = [];
+        pushStep('control', 28); // path = []
+
+        pushStep('control', 30); // while curr != source:
+        while (curr !== source) {
+            const p = parentState[curr];
+            pushStep('control', 31); // p = parent[curr]
+            
+            bottleneckState = Math.min(bottleneckState, capacity[p][curr] - flow[p][curr]);
+            pushStep('control', 32); // bottleneck = min(bottleneck, graph.capacity[p][curr] - flow[p][curr])
+            
+            pathState.push({ u: p, v: curr });
+            pushStep('control', 33); // path.append((p, curr))
+            
+            curr = p;
+            pushStep('control', 34); // curr = p
+            pushStep('control', 30); // while curr != source:
+        }
+
+        pathState.reverse();
+        pushStep('control', 36); // path.reverse()
 
         animationSteps.push({
             type: 'path_found',
-            path: pathEdges,
-            bottleneck
+            line: 36,
+            path: [...pathState],
+            bottleneck: bottleneckState,
+            maxFlow, stateFlow: copyFlow(), source, sink, stack: [], parent: { ...parentState }
         });
 
         // Augment flow along the path
-        for (const edge of pathEdges) {
-            flow[edge.u][edge.v] += bottleneck;
-            flow[edge.v][edge.u] -= bottleneck; // Residual back-edge
+        pushStep('control', 38); // for u, v in path:
+        for (const edge of pathState) {
+            flow[edge.u][edge.v] += bottleneckState;
+            pushStep('control', 39); // flow[u][v] += bottleneck
+            
+            flow[edge.v][edge.u] -= bottleneckState; // Residual back-edge
+            pushStep('control', 40); // flow[v][u] -= bottleneck
+            pushStep('control', 38); // for top
         }
 
-        maxFlow += bottleneck;
-
-        // Deep copy the current flow matrix for the timeline state
-        const stateFlow = {};
-        nodeIds.forEach(u => {
-            stateFlow[u] = {};
-            nodeIds.forEach(v => {
-                stateFlow[u][v] = flow[u][v];
-            });
-        });
+        maxFlow += bottleneckState;
+        pushStep('control', 42); // max_flow += bottleneck
 
         animationSteps.push({
             type: 'augment',
-            path: pathEdges,
-            bottleneck,
+            line: 42,
+            path: [...pathState],
+            bottleneck: bottleneckState,
             currentMax: maxFlow,
-            stateFlow
+            stateFlow: copyFlow(),
+            maxFlow, source, sink, stack: [], parent: { ...parentState }
         });
+        
+        pushStep('control', 5); // main while true loop
     }
 
-    animationSteps.push({ type: 'complete', maxFlow });
+    pushStep('control', 44); // return max_flow
+    animationSteps.push({ type: 'complete', line: 44, maxFlow, stateFlow: copyFlow(), source, sink, stack: [], parent: { ...parentState }, path: [] });
 
     // Playback State Variables
     const totalSteps = animationSteps.length;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = 600;
     let currentStep = 0;
     let playInterval = null;
+    
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">ford_fulkerson</span>(graph, source, sink):`,
+        `    flow = {u: {v: <span style="color: #d19a66;">0</span> <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.nodes} <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    max_flow = <span style="color: #d19a66;">0</span>`,
+        `    `,
+        `    <span style="color: #c678dd;">while True</span>:`,
+        `        parent = {u: <span style="color: #d19a66;">None</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `        parent[source] = source`,
+        `        stack = [source]`,
+        `        path_found = <span style="color: #d19a66;">False</span>`,
+        `        `,
+        `        <span style="color: #c678dd;">while</span> stack <span style="color: #c678dd;">and not</span> path_found:`,
+        `            u = stack.<span style="color: #61afef;">pop</span>()`,
+        `            `,
+        `            <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `                residual = graph.capacity[u][v] - flow[u][v]`,
+        `                <span style="color: #c678dd;">if</span> parent[v] <span style="color: #c678dd;">is None and</span> residual > <span style="color: #d19a66;">0</span>:`,
+        `                    parent[v] = u`,
+        `                    <span style="color: #c678dd;">if</span> v == sink:`,
+        `                        path_found = <span style="color: #d19a66;">True</span>`,
+        `                        <span style="color: #c678dd;">break</span>`,
+        `                    stack.<span style="color: #61afef;">append</span>(v)`,
+        `                    `,
+        `        <span style="color: #c678dd;">if not</span> path_found:`,
+        `            <span style="color: #c678dd;">break</span>`,
+        `            `,
+        `        bottleneck = <span style="color: #56b6c2;">float</span>(<span style="color: #98c379;">'inf'</span>)`,
+        `        curr = sink`,
+        `        path = []`,
+        `        `,
+        `        <span style="color: #c678dd;">while</span> curr != source:`,
+        `            p = parent[curr]`,
+        `            bottleneck = <span style="color: #56b6c2;">min</span>(bottleneck, graph.capacity[p][curr] - flow[p][curr])`,
+        `            path.<span style="color: #61afef;">append</span>((p, curr))`,
+        `            curr = p`,
+        `            `,
+        `        path.<span style="color: #61afef;">reverse</span>()`,
+        `        `,
+        `        <span style="color: #c678dd;">for</span> u, v <span style="color: #c678dd;">in</span> path:`,
+        `            flow[u][v] += bottleneck`,
+        `            flow[v][u] -= bottleneck`,
+        `            `,
+        `        max_flow += bottleneck`,
+        `        `,
+        `    <span style="color: #c678dd;">return</span> max_flow`
+    ];
+    
+    const formatDict = (dict) => {
+        let items = [];
+        for (let k in dict) {
+            if (dict[k] !== null && dict[k] !== undefined) items.push(`${k}: ${dict[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
 
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
         let activePathEdges = new Set();
-        let currentFlowState = null;
+        let currentFlowState = stepData ? stepData.stateFlow : null;
         let pathNodes = new Set();
 
-        let logHTML = `<h3 style="color: #ff8a65;">Ford-Fulkerson (DFS) Max Flow on <span style="color: #ff8a65;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        let logHTML = `
+            <h3 style="color: #ff8a65;">Ford-Fulkerson Max Flow on <span style="color: #ff8a65;">${graphName}</span></h3>
+            <div style="font-size: 0.9em; margin-bottom: 10px; display: flex; gap: 15px;">
+                <span><span style="color: #5c6bc0;">●</span> Source / Sink</span>
+                <span><span style="color: #ff8a65;">●</span> Active Node</span>
+                <span><span style="color: ${nodeVisitColor};">▬</span> Flow Positive</span>
+            </div>
+            <div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>
+        `;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const bottleneckVar = stepData ? stepData.bottleneck : 'inf';
+        const maxFlowVar = stepData ? stepData.maxFlow : '0';
+        const parentVar = stepData ? formatDict(stepData.parent) : '{}';
+
+        let stackStr = '[]';
+        if (stepData && stepData.stack.length > 0) stackStr = '[' + stepData.stack.join(', ') + ']';
+        
+        let pathStrVar = '[]';
+        if (stepData && stepData.path.length > 0) pathStrVar = '[' + stepData.path.map(e => `(${e.u},${e.v})`).join(', ') + ']';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">max_flow:</span> <span style="color: #d19a66; font-weight: bold;">${maxFlowVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">bottleneck:</span> <span style="color: #d19a66; font-weight: bold;">${bottleneckVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">stack:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${stackStr}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">path:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${pathStrVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">parent:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${parentVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+        
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
+        
+        let evaluatingEdge = null;
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'start') {
-                logHTML += `<div>Initialized Flow Network. Source: <span style="color: #ff8a65">${step.source}</span>, Sink: <span style="color: #ff8a65">${step.sink}</span></div><br>`;
+                textLogHTML += `<div>Initialized Flow Network. Source: <span style="color: #ff8a65">${step.source}</span>, Sink: <span style="color: #ff8a65">${step.sink}</span></div><br>`;
+            } else if (step.type === 'visit') {
+                textLogHTML += `<div>DFS popped node <span style="color: #ff8a65">${step.u}</span> from stack.</div>`;
+            } else if (step.type === 'eval_edge') {
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (Residual Capacity: ${step.residual})</div>`;
+                if (idx === targetStep - 1) evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'path_found') {
                 const pathStr = step.path.map(e => e.u).join(' &rarr; ') + ` &rarr; ${step.path[step.path.length - 1].v}`;
-                logHTML += `<div>DFS found augmenting path: <span style="color: #a3bf60">${pathStr}</span></div>`;
-                logHTML += `<div style="padding-left: 10px;">Bottleneck Capacity (min residual): <strong>${step.bottleneck}</strong></div>`;
+                textLogHTML += `<div style="margin-top: 10px; font-weight: bold;">DFS found augmenting path: <span style="color: #a3bf60">${pathStr}</span></div>`;
+                textLogHTML += `<div style="padding-left: 10px;">Bottleneck Capacity (min residual): <strong>${step.bottleneck}</strong></div><br>`;
 
                 step.path.forEach(e => {
                     activePathEdges.add(`${safe(e.u)}-${safe(e.v)}`);
@@ -2852,20 +4338,23 @@ function visualizeFordFulkerson(graphName, startNodeId, sinkNodeId, container, n
                     pathNodes.add(safe(e.v));
                 });
             } else if (step.type === 'augment') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Augmented flow by ${step.bottleneck}. Current Max Flow: ${step.currentMax}</div><br>`;
-                currentFlowState = step.stateFlow;
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60; font-weight: bold;">↳ Augmented flow by ${step.bottleneck}. Current Max Flow: ${step.currentMax}</div><br>`;
                 activePathEdges.clear();
                 pathNodes.clear();
             } else if (step.type === 'complete') {
-                logHTML += `<div style="color: #ff8a65; margin-top: 10px; padding: 10px; border: 2px solid #ff8a65; display: inline-block;"><strong>Algorithm Complete! Max Flow: ${step.maxFlow}</strong></div>`;
+                textLogHTML += `<div style="color: #ff8a65; margin-top: 10px; padding: 10px; border: 2px solid #ff8a65; display: inline-block;"><strong>Algorithm Complete! Max Flow: ${step.maxFlow}</strong></div>`;
             }
 
-            // Reset ephemeral state if not on current step
             if (idx !== targetStep - 1 && step.type === 'path_found') {
                 activePathEdges.clear();
                 pathNodes.clear();
             }
+            if (idx !== targetStep - 1 && step.type === 'eval_edge') {
+                evaluatingEdge = null;
+            }
         }
+
+        logHTML += textLogHTML;
 
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
@@ -2878,15 +4367,18 @@ function visualizeFordFulkerson(graphName, startNodeId, sinkNodeId, container, n
             const nodeId = safe(d.id);
             const isSource = nodeId === source;
             const isSink = nodeId === sink;
-            const isActive = pathNodes.has(nodeId);
-
+            
+            const isPathActive = pathNodes.has(nodeId);
+            const isU = stepData && stepData.u === nodeId;
+            const isV = stepData && stepData.v === nodeId;
+            const isActive = isPathActive || isU || isV;
 
             const algorithmRunning = targetStep > 0 && targetStep < totalSteps;
             let targetColor = originalNodeColors.get(nodeId);
 
             if (algorithmRunning) {
                 if (isSource || isSink)
-                    targetColor = '#5c6bc0';
+                    targetColor = '#5c6bc0'; // Indigo for source/sink
                 else if (isActive)
                     targetColor = '#ff8a65';
             }
@@ -2904,17 +4396,20 @@ function visualizeFordFulkerson(graphName, startNodeId, sinkNodeId, container, n
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
             const edgeKey = `${sId}-${tId}`;
+            const isEval = evaluatingEdge === edgeKey;
 
             const isPath = activePathEdges.has(edgeKey);
 
             // Check if this physical edge is carrying flow in the current state
-            const flowCarried = currentFlowState && currentFlowState[sId][tId] > 0;
-            const isSaturated = currentFlowState && currentFlowState[sId][tId] === capacity[sId][tId] && capacity[sId][tId] > 0;
+            const flowCarried = currentFlowState && currentFlowState[sId] && currentFlowState[sId][tId] > 0;
+            const isSaturated = currentFlowState && currentFlowState[sId] && currentFlowState[sId][tId] === capacity[sId][tId] && capacity[sId][tId] > 0;
 
             let targetColor = edgeColor;
 
             if (isPath) {
                 targetColor = edgeEvalColor;
+            } else if (isEval) {
+                targetColor = edgeEvalColor; // same for evaluation
             } else if (isSaturated) {
                 targetColor = errorColor;
             } else if (flowCarried) {
@@ -3043,111 +4538,323 @@ function visualizeEdmondsKarp(graphName, startNodeId, sinkNodeId, container, nod
     });
 
     const animationSteps = [];
+    
+    // State variables
     let maxFlow = 0;
-
-    animationSteps.push({ type: 'start', source, sink });
-
-    // Edmonds-Karp Loop (Ford-Fulkerson method via BFS)
-    while (true) {
-        // BFS to find the shortest augmenting path in terms of number of edges
-        const parent = {};
-        nodeIds.forEach(id => parent[id] = null);
-        const q = [source];
-        parent[source] = source;
-
-        let pathFound = false;
-
-        while (q.length > 0 && !pathFound) {
-            const u = q.shift();
-
-            for (const v of adj[u]) {
-                const residual = capacity[u][v] - flow[u][v];
-                // If unvisited and has residual capacity
-                if (parent[v] === null && residual > 0) {
-                    parent[v] = u;
-                    if (v === sink) {
-                        pathFound = true;
-                        break;
-                    }
-                    q.push(v);
-                }
+    let uState = null;
+    let vState = null;
+    let parentState = {};
+    let qState = [];
+    let pathFoundState = false;
+    let bottleneckState = 'inf';
+    let pathState = [];
+    
+    const copyFlow = () => {
+        const f = {};
+        for (let u of nodeIds) {
+            f[u] = {};
+            for (let v of nodeIds) {
+                f[u][v] = flow[u][v];
             }
         }
+        return f;
+    };
 
-        // If no augmenting path can be found from source to sink, max flow is reached
-        if (!pathFound) break;
+    const pushStep = (type, line, extras = {}) => {
+        animationSteps.push({
+            type,
+            line,
+            u: uState,
+            v: vState,
+            parent: { ...parentState },
+            queue: [...qState],
+            pathFound: pathFoundState,
+            bottleneck: bottleneckState,
+            path: [...pathState],
+            maxFlow,
+            stateFlow: copyFlow(),
+            source,
+            sink,
+            ...extras
+        });
+    };
 
-        // Reconstruct path to find bottleneck (minimum residual capacity along path)
-        let bottleneck = Infinity;
-        let curr = sink;
-        const pathEdges = [];
+    pushStep('control', 2); // flow = ...
+    pushStep('control', 3); // max_flow = 0
+    animationSteps.push({ type: 'start', line: 3, source, sink, stateFlow: copyFlow(), maxFlow: 0, queue: [], parent: {}, path: [] });
 
-        while (curr !== source) {
-            const p = parent[curr];
-            bottleneck = Math.min(bottleneck, capacity[p][curr] - flow[p][curr]);
-            pathEdges.push({ u: p, v: curr });
-            curr = p;
+    // Edmonds-Karp Loop (Ford-Fulkerson method via BFS)
+    pushStep('control', 5); // while True:
+    while (true) {
+        nodeIds.forEach(id => parentState[id] = null);
+        pushStep('control', 6); // parent = {u: None for u in graph.nodes}
+        
+        parentState[source] = source;
+        pushStep('control', 7); // parent[source] = source
+        
+        qState = [source];
+        pushStep('control', 8); // queue = [source]
+        
+        pathFoundState = false;
+        pushStep('control', 9); // path_found = False
+        
+        uState = null;
+        vState = null;
+
+        pushStep('control', 11); // while queue and not path_found:
+        while (qState.length > 0 && !pathFoundState) {
+            uState = qState.shift();
+            pushStep('control', 12); // u = queue.pop(0)
+            
+            animationSteps.push({ type: 'visit', line: 12, u: uState, v: null, queue: [...qState], parent: { ...parentState }, maxFlow, stateFlow: copyFlow(), source, sink, path: [] });
+
+            pushStep('control', 14); // for v in graph.adj[u]:
+            for (const to of adj[uState]) {
+                vState = to;
+                
+                const residual = capacity[uState][vState] - flow[uState][vState];
+                pushStep('control', 15); // residual = graph.capacity[u][v] - flow[u][v]
+                
+                animationSteps.push({ type: 'eval_edge', line: 15, u: uState, v: vState, residual, queue: [...qState], parent: { ...parentState }, maxFlow, stateFlow: copyFlow(), source, sink, path: [] });
+
+                pushStep('control', 16); // if parent[v] is None and residual > 0:
+                // If unvisited and has residual capacity
+                if (parentState[vState] === null && residual > 0) {
+                    parentState[vState] = uState;
+                    pushStep('control', 17); // parent[v] = u
+                    
+                    pushStep('control', 18); // if v == sink:
+                    if (vState === sink) {
+                        pathFoundState = true;
+                        pushStep('control', 19); // path_found = True
+                        pushStep('control', 20); // break
+                        break;
+                    }
+                    
+                    qState.push(vState);
+                    pushStep('control', 21); // queue.append(v)
+                }
+                pushStep('control', 14); // loop top
+            }
+            pushStep('control', 11); // outer loop top
         }
 
-        pathEdges.reverse();
+        uState = null;
+        vState = null;
+
+        pushStep('control', 23); // if not path_found:
+        // If no augmenting path can be found, max flow is reached
+        if (!pathFoundState) {
+            pushStep('control', 24); // break
+            break;
+        }
+
+        bottleneckState = Infinity;
+        pushStep('control', 26); // bottleneck = float('inf')
+        
+        let curr = sink;
+        pushStep('control', 27); // curr = sink
+        
+        pathState = [];
+        pushStep('control', 28); // path = []
+
+        pushStep('control', 30); // while curr != source:
+        while (curr !== source) {
+            const p = parentState[curr];
+            pushStep('control', 31); // p = parent[curr]
+            
+            bottleneckState = Math.min(bottleneckState, capacity[p][curr] - flow[p][curr]);
+            pushStep('control', 32); // bottleneck = min(bottleneck, graph.capacity[p][curr] - flow[p][curr])
+            
+            pathState.push({ u: p, v: curr });
+            pushStep('control', 33); // path.append((p, curr))
+            
+            curr = p;
+            pushStep('control', 34); // curr = p
+            pushStep('control', 30); // while curr != source:
+        }
+
+        pathState.reverse();
+        pushStep('control', 36); // path.reverse()
 
         animationSteps.push({
             type: 'path_found',
-            path: pathEdges,
-            bottleneck
+            line: 36,
+            path: [...pathState],
+            bottleneck: bottleneckState,
+            maxFlow, stateFlow: copyFlow(), source, sink, queue: [], parent: { ...parentState }
         });
 
-        // Augment flow along the discovered path
-        for (const edge of pathEdges) {
-            flow[edge.u][edge.v] += bottleneck;
-            flow[edge.v][edge.u] -= bottleneck; // Symmetric residual back-edge update
+        // Augment flow along the path
+        pushStep('control', 38); // for u, v in path:
+        for (const edge of pathState) {
+            flow[edge.u][edge.v] += bottleneckState;
+            pushStep('control', 39); // flow[u][v] += bottleneck
+            
+            flow[edge.v][edge.u] -= bottleneckState; // Residual back-edge
+            pushStep('control', 40); // flow[v][u] -= bottleneck
+            pushStep('control', 38); // for top
         }
 
-        maxFlow += bottleneck;
-
-        // Snapshot current flow matrix state for timeline seeking accuracy
-        const stateFlow = {};
-        nodeIds.forEach(u => {
-            stateFlow[u] = {};
-            nodeIds.forEach(v => {
-                stateFlow[u][v] = flow[u][v];
-            });
-        });
+        maxFlow += bottleneckState;
+        pushStep('control', 42); // max_flow += bottleneck
 
         animationSteps.push({
             type: 'augment',
-            path: pathEdges,
-            bottleneck,
+            line: 42,
+            path: [...pathState],
+            bottleneck: bottleneckState,
             currentMax: maxFlow,
-            stateFlow
+            stateFlow: copyFlow(),
+            maxFlow, source, sink, queue: [], parent: { ...parentState }
         });
+        
+        pushStep('control', 5); // main while true loop
     }
 
-    animationSteps.push({ type: 'complete', maxFlow });
+    pushStep('control', 44); // return max_flow
+    animationSteps.push({ type: 'complete', line: 44, maxFlow, stateFlow: copyFlow(), source, sink, queue: [], parent: { ...parentState }, path: [] });
 
     // Playback State Variables
     const totalSteps = animationSteps.length;
-    const BASE_DELAY = 1000;
+    const BASE_DELAY = 600;
     let currentStep = 0;
     let playInterval = null;
+    
+    const pythonCode = [
+        `<span style="color: #c678dd;">def</span> <span style="color: #61afef;">edmonds_karp</span>(graph, source, sink):`,
+        `    flow = {u: {v: <span style="color: #d19a66;">0</span> <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.nodes} <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `    max_flow = <span style="color: #d19a66;">0</span>`,
+        `    `,
+        `    <span style="color: #c678dd;">while True</span>:`,
+        `        parent = {u: <span style="color: #d19a66;">None</span> <span style="color: #c678dd;">for</span> u <span style="color: #c678dd;">in</span> graph.nodes}`,
+        `        parent[source] = source`,
+        `        queue = [source]`,
+        `        path_found = <span style="color: #d19a66;">False</span>`,
+        `        `,
+        `        <span style="color: #c678dd;">while</span> queue <span style="color: #c678dd;">and not</span> path_found:`,
+        `            u = queue.<span style="color: #61afef;">pop</span>(<span style="color: #d19a66;">0</span>)`,
+        `            `,
+        `            <span style="color: #c678dd;">for</span> v <span style="color: #c678dd;">in</span> graph.adj[u]:`,
+        `                residual = graph.capacity[u][v] - flow[u][v]`,
+        `                <span style="color: #c678dd;">if</span> parent[v] <span style="color: #c678dd;">is None and</span> residual > <span style="color: #d19a66;">0</span>:`,
+        `                    parent[v] = u`,
+        `                    <span style="color: #c678dd;">if</span> v == sink:`,
+        `                        path_found = <span style="color: #d19a66;">True</span>`,
+        `                        <span style="color: #c678dd;">break</span>`,
+        `                    queue.<span style="color: #61afef;">append</span>(v)`,
+        `                    `,
+        `        <span style="color: #c678dd;">if not</span> path_found:`,
+        `            <span style="color: #c678dd;">break</span>`,
+        `            `,
+        `        bottleneck = <span style="color: #56b6c2;">float</span>(<span style="color: #98c379;">'inf'</span>)`,
+        `        curr = sink`,
+        `        path = []`,
+        `        `,
+        `        <span style="color: #c678dd;">while</span> curr != source:`,
+        `            p = parent[curr]`,
+        `            bottleneck = <span style="color: #56b6c2;">min</span>(bottleneck, graph.capacity[p][curr] - flow[p][curr])`,
+        `            path.<span style="color: #61afef;">append</span>((p, curr))`,
+        `            curr = p`,
+        `            `,
+        `        path.<span style="color: #61afef;">reverse</span>()`,
+        `        `,
+        `        <span style="color: #c678dd;">for</span> u, v <span style="color: #c678dd;">in</span> path:`,
+        `            flow[u][v] += bottleneck`,
+        `            flow[v][u] -= bottleneck`,
+        `            `,
+        `        max_flow += bottleneck`,
+        `        `,
+        `    <span style="color: #c678dd;">return</span> max_flow`
+    ];
+    
+    const formatDict = (dict) => {
+        let items = [];
+        for (let k in dict) {
+            if (dict[k] !== null && dict[k] !== undefined) items.push(`${k}: ${dict[k]}`);
+        }
+        return '{' + items.join(', ') + '}';
+    };
 
     // Core Render Function
     const renderGraphState = (targetStep, animate = false) => {
+        const stepData = targetStep > 0 ? animationSteps[targetStep - 1] : null;
         let activePathEdges = new Set();
-        let currentFlowState = null;
+        let currentFlowState = stepData ? stepData.stateFlow : null;
         let pathNodes = new Set();
 
-        let logHTML = `<h3 style="color: #ff8a65;">Edmonds-Karp Max Flow on <span style="color: #ff8a65;">${graphName}</span></h3><div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>`;
+        let logHTML = `
+            <h3 style="color: #ff8a65;">Edmonds-Karp Max Flow on <span style="color: #ff8a65;">${graphName}</span></h3>
+            <div style="font-size: 0.9em; margin-bottom: 10px; display: flex; gap: 15px;">
+                <span><span style="color: #5c6bc0;">●</span> Source / Sink</span>
+                <span><span style="color: #ff8a65;">●</span> Active Node</span>
+                <span><span style="color: ${nodeVisitColor};">▬</span> Flow Positive</span>
+            </div>
+            <div style="width: 100%; height: 1px; background-color: #333; margin: 0 0 20px 0;"></div>
+        `;
+
+        const currentLine = stepData ? stepData.line : null;
+        const uVar = stepData && stepData.u !== null ? stepData.u : 'None';
+        const vVar = stepData && stepData.v !== null ? stepData.v : 'None';
+        const bottleneckVar = stepData ? stepData.bottleneck : 'inf';
+        const maxFlowVar = stepData ? stepData.maxFlow : '0';
+        const parentVar = stepData ? formatDict(stepData.parent) : '{}';
+
+        let queueStr = '[]';
+        if (stepData && stepData.queue.length > 0) queueStr = '[' + stepData.queue.join(', ') + ']';
+        
+        let pathStrVar = '[]';
+        if (stepData && stepData.path.length > 0) pathStrVar = '[' + stepData.path.map(e => `(${e.u},${e.v})`).join(', ') + ']';
+
+        logHTML += '<div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; text-align: left;">';
+
+        // Python Code Block
+        logHTML += `<div style="flex: 2; min-width: 320px; background: #282c34; color: #abb2bf; padding: 12px 12px 12px 0; border-radius: 6px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.6; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 1px solid #1e2227;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; padding-left: 12px;">Algorithm Execution</div>';
+
+        pythonCode.forEach((line, index) => {
+            const lineNum = index + 1;
+            const isHighlighted = lineNum === currentLine;
+            const bg = isHighlighted ? '#3b4048' : 'transparent';
+            const borderLeft = isHighlighted ? '3px solid #61afef' : '3px solid transparent';
+            const lineNumHTML = `<span style="display: inline-block; width: 24px; text-align: right; margin-right: 12px; color: #4b5263; border-right: 1px solid #3b4048; padding-right: 8px; user-select: none;">${lineNum}</span>`;
+
+            logHTML += `<div style="display: flex; padding: 2px 6px 2px 0; border-radius: 2px; white-space: pre; background-color: ${bg}; border-left: ${borderLeft}; transition: all 0.2s; margin-bottom: 2px;">${lineNumHTML}<span>${line}</span></div>`;
+        });
+        logHTML += '</div>';
+
+        // Variables Block
+        logHTML += `<div style="flex: 1; min-width: 180px; background: #282c34; padding: 12px; border-radius: 6px; border: 1px solid #1e2227; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.8; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #abb2bf;">`;
+        logHTML += '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #5c6370; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Variables</div>';
+        logHTML += `<div><span style="color: #c678dd;">u:</span> <span style="color: #e5c07b; font-weight: bold;">${uVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">v:</span> <span style="color: #e5c07b; font-weight: bold;">${vVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">max_flow:</span> <span style="color: #d19a66; font-weight: bold;">${maxFlowVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">bottleneck:</span> <span style="color: #d19a66; font-weight: bold;">${bottleneckVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">queue:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${queueStr}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">path:</span> <span style="color: #56b6c2; font-weight: bold; word-break: break-all;">${pathStrVar}</span></div>`;
+        logHTML += `<div><span style="color: #c678dd;">parent:</span> <span style="color: #abb2bf; font-weight: bold; word-break: break-all;">${parentVar}</span></div>`;
+        logHTML += '</div>';
+
+        logHTML += '</div>';
+        
+        let textLogHTML = '<div style="margin-bottom: 10px; font-weight: bold; font-family: sans-serif; color: #aaa; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Traversal Log</div>';
+        
+        let evaluatingEdge = null;
 
         for (let idx = 0; idx < targetStep; idx++) {
             const step = animationSteps[idx];
 
             if (step.type === 'start') {
-                logHTML += `<div>Initialized Flow Network. Source: <span style="color: #ff8a65">${step.source}</span>, Sink: <span style="color: #ff8a65">${step.sink}</span></div><br>`;
+                textLogHTML += `<div>Initialized Flow Network. Source: <span style="color: #ff8a65">${step.source}</span>, Sink: <span style="color: #ff8a65">${step.sink}</span></div><br>`;
+            } else if (step.type === 'visit') {
+                textLogHTML += `<div>BFS dequeued node <span style="color: #ff8a65">${step.u}</span>.</div>`;
+            } else if (step.type === 'eval_edge') {
+                textLogHTML += `<div style="padding-left: 10px;">Evaluating edge <span style="color: #a3bf60">${step.u} &rarr; ${step.v}</span> (Residual Capacity: ${step.residual})</div>`;
+                if (idx === targetStep - 1) evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'path_found') {
                 const pathStr = step.path.map(e => e.u).join(' &rarr; ') + ` &rarr; ${step.path[step.path.length - 1].v}`;
-                logHTML += `<div>BFS found shortest augmenting path: <span style="color: #a3bf60">${pathStr}</span></div>`;
-                logHTML += `<div style="padding-left: 10px;">Bottleneck Capacity (min residual): <strong>${step.bottleneck}</strong></div>`;
+                textLogHTML += `<div style="margin-top: 10px; font-weight: bold;">BFS found shortest augmenting path: <span style="color: #a3bf60">${pathStr}</span></div>`;
+                textLogHTML += `<div style="padding-left: 10px;">Bottleneck Capacity (min residual): <strong>${step.bottleneck}</strong></div><br>`;
 
                 step.path.forEach(e => {
                     activePathEdges.add(`${safe(e.u)}-${safe(e.v)}`);
@@ -3155,20 +4862,24 @@ function visualizeEdmondsKarp(graphName, startNodeId, sinkNodeId, container, nod
                     pathNodes.add(safe(e.v));
                 });
             } else if (step.type === 'augment') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Augmented flow by ${step.bottleneck}. Current Max Flow: ${step.currentMax}</div><br>`;
-                currentFlowState = step.stateFlow;
+                textLogHTML += `<div style="padding-left: 10px; color: #a3bf60; font-weight: bold;">↳ Augmented flow by ${step.bottleneck}. Current Max Flow: ${step.currentMax}</div><br>`;
                 activePathEdges.clear();
                 pathNodes.clear();
             } else if (step.type === 'complete') {
-                logHTML += `<div style="color: #ff8a65; margin-top: 10px; padding: 10px; border: 2px solid #ff8a65; display: inline-block;"><strong>Algorithm Complete! Max Flow: ${step.maxFlow}</strong></div>`;
+                textLogHTML += `<div style="color: #ff8a65; margin-top: 10px; padding: 10px; border: 2px solid #ff8a65; display: inline-block;"><strong>Algorithm Complete! Max Flow: ${step.maxFlow}</strong></div>`;
             }
 
-            // Reset ephemeral visualization properties if skipping past a step
+            // Reset ephemeral state if not on current step
             if (idx !== targetStep - 1 && step.type === 'path_found') {
                 activePathEdges.clear();
                 pathNodes.clear();
             }
+            if (idx !== targetStep - 1 && step.type === 'eval_edge') {
+                evaluatingEdge = null;
+            }
         }
+
+        logHTML += textLogHTML;
 
         if (typeof resultLog !== 'undefined') {
             resultLog.innerHTML = logHTML;
@@ -3181,18 +4892,20 @@ function visualizeEdmondsKarp(graphName, startNodeId, sinkNodeId, container, nod
             const nodeId = safe(d.id);
             const isSource = nodeId === source;
             const isSink = nodeId === sink;
-            const isActive = pathNodes.has(nodeId);
+            
+            const isPathActive = pathNodes.has(nodeId);
+            const isU = stepData && stepData.u === nodeId;
+            const isV = stepData && stepData.v === nodeId;
+            const isActive = isPathActive || isU || isV;
 
-
-            let targetColor = originalNodeColors.get(nodeId);
             const algorithmRunning = targetStep > 0 && targetStep < totalSteps;
+            let targetColor = originalNodeColors.get(nodeId);
 
             if (algorithmRunning) {
-                if (isSource || isSink) {
-                    targetColor = "#5c6bc0";
-                } else if (isActive) {
-                    targetColor = "#ff8a65";
-                }
+                if (isSource || isSink)
+                    targetColor = '#5c6bc0'; // Indigo for source/sink
+                else if (isActive)
+                    targetColor = '#ff8a65';
             }
 
             if (animate) {
@@ -3202,27 +4915,30 @@ function visualizeEdmondsKarp(graphName, startNodeId, sinkNodeId, container, nod
             }
         });
 
-        // Apply Edge Colors and Weights
+        // Apply Edge Colors
         svg.selectAll('.link').each(function () {
             const el = d3.select(this);
             const sId = safe(el.attr('source-id').replace(arrowId, ''));
             const tId = safe(el.attr('target-id').replace(arrowId, ''));
             const edgeKey = `${sId}-${tId}`;
+            const isEval = evaluatingEdge === edgeKey;
 
             const isPath = activePathEdges.has(edgeKey);
 
-            // Analyze physical usage status
-            const flowCarried = currentFlowState && currentFlowState[sId][tId] > 0;
-            const isSaturated = currentFlowState && currentFlowState[sId][tId] === capacity[sId][tId] && capacity[sId][tId] > 0;
+            // Check if this physical edge is carrying flow in the current state
+            const flowCarried = currentFlowState && currentFlowState[sId] && currentFlowState[sId][tId] > 0;
+            const isSaturated = currentFlowState && currentFlowState[sId] && currentFlowState[sId][tId] === capacity[sId][tId] && capacity[sId][tId] > 0;
 
             let targetColor = edgeColor;
 
             if (isPath) {
                 targetColor = edgeEvalColor;
+            } else if (isEval) {
+                targetColor = edgeEvalColor; // same for evaluation
             } else if (isSaturated) {
-                targetColor = errorColor; // Red indicates zero remaining residual capacity
+                targetColor = errorColor;
             } else if (flowCarried) {
-                targetColor = nodeVisitColor; // Green tracks active distribution routes
+                targetColor = nodeVisitColor;
             }
 
             if (animate) {
@@ -3231,7 +4947,7 @@ function visualizeEdmondsKarp(graphName, startNodeId, sinkNodeId, container, nod
                 el.interrupt().attr('stroke', targetColor);
             }
 
-            // Update associated directed arrowheads
+            // Update associated arrow head
             if (directed) {
                 const uniqueMarkerId = safe(`${arrowId}-${sId}-${tId}`);
                 const markerPath = svg.select(`#${uniqueMarkerId} path`);
