@@ -34,7 +34,8 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
         type: 'node',
         id: startNodeId,
         level: 0,
-        fromEdge: null
+        fromEdge: null,
+        queueState: [...queue]
     });
 
     while (queue.length > 0) {
@@ -71,7 +72,8 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
                     type: 'node',
                     id: nextNodeId,
                     level: levels[nextNodeId],
-                    fromEdge: { u: sId, v: tId }
+                    fromEdge: { u: sId, v: tId },
+                    queueState: [...queue]
                 });
             }
         });
@@ -104,10 +106,14 @@ function visualizeBFS(graphName, startNodeId, container, nodes, edges, svg, arro
 
             if (step.type === 'node') {
                 if (step.level === 0) {
-                    logHTML += `<div>Started BFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div><br>`;
+                    logHTML += `<div>Started BFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div>`;
                 } else {
-                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div><br>`;
+                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div>`;
                 }
+                if (step.queueState) {
+                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Queue: [${step.queueState.join(', ')}]</div>`;
+                }
+                logHTML += `<br>`;
             }
         }
 
@@ -305,6 +311,7 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
             for (let i = neighbors.length - 1; i >= 0; i--) {
                 stack.push(neighbors[i]);
             }
+            animationSteps[animationSteps.length - 1].stackState = stack.map(s => s.id);
         }
     }
 
@@ -328,10 +335,14 @@ function visualizeDFS(graphName, startNodeId, container, nodes, edges, svg, arro
 
             if (step.type === 'node') {
                 if (step.level === 0) {
-                    logHTML += `<div>Started DFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div><br>`;
+                    logHTML += `<div>Started DFS at vertex <span style="color: #ff8a65">${step.id}</span> at level <span style="color: #ff8a65">0</span></div>`;
                 } else {
-                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div><br>`;
+                    logHTML += `<div>Visited vertex <span style="color: #ff8a65">${step.id}</span> through edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> at level <span style="color: #ff8a65">${step.level}</span></div>`;
                 }
+                if (step.stackState) {
+                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Stack: [${step.stackState.join(', ')}]</div>`;
+                }
+                logHTML += `<br>`;
             }
         }
 
@@ -537,6 +548,7 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
                 }
             }
         }
+        animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.id}(${i.priority})`);
     }
 
     // Playback State Variables
@@ -559,10 +571,14 @@ function visualizeDijkstra(graphName, startNodeId, container, nodes, edges, svg,
 
             if (step.type === 'node') {
                 if (step.dist === 0) {
-                    logHTML += `<div>Started at vertex <span style="color: #ff8a65">${step.id}</span> (Distance: <span style="color: #ff8a65">0</span>)</div><br>`;
+                    logHTML += `<div>Started at vertex <span style="color: #ff8a65">${step.id}</span> (Distance: <span style="color: #ff8a65">0</span>)</div>`;
                 } else {
-                    logHTML += `<div>Finalized vertex <span style="color: #ff8a65">${step.id}</span> via edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> [w: ${step.fromEdge.weight}] - Total Dist: <span style="color: #ff8a65">${step.dist}</span></div><br>`;
+                    logHTML += `<div>Finalized vertex <span style="color: #ff8a65">${step.id}</span> via edge <span style="color: #a3bf60">(${step.fromEdge.u},${step.fromEdge.v})</span> [w: ${step.fromEdge.weight}] - Total Dist: <span style="color: #ff8a65">${step.dist}</span></div>`;
                 }
+                if (step.pqState) {
+                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
+                }
+                logHTML += `<br>`;
             }
         }
 
@@ -1232,12 +1248,13 @@ function visualizeMSTKruskal(graphName, container, nodes, edges, svg, arrowId) {
                 logHTML += `<div>Evaluating edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
                 evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'accept') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Nodes ${step.u} and ${step.v} connected.</div><br>`;
+                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Nodes ${step.u} and ${step.v} connected.</div>`;
                 mstEdges.add(`${safe(step.u)}-${safe(step.v)}`);
                 mstEdges.add(`${safe(step.v)}-${safe(step.u)}`);
                 mstNodes.add(safe(step.u));
                 mstNodes.add(safe(step.v));
                 totalWeight += step.w;
+                logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
                 evaluatingEdge = null;
             } else if (step.type === 'reject') {
                 logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Edge creates a cycle.</div><br>`;
@@ -1398,6 +1415,7 @@ function visualizeMSTPrim(graphName, container, nodes, edges, svg, arrowId) {
     adj[startNode].forEach(edge => {
         pq.enqueue({ u: startNode, v: edge.to, weight: edge.weight }, edge.weight);
     });
+    animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.v}(${i.priority})`);
 
     let edgesAccepted = 0;
 
@@ -1431,6 +1449,7 @@ function visualizeMSTPrim(graphName, container, nodes, edges, svg, arrowId) {
                 pq.enqueue({ u: newNode, v: edge.to, weight: edge.weight }, edge.weight);
             }
         });
+        animationSteps[animationSteps.length - 1].pqState = pq.items.map(i => `${i.element.v}(${i.priority})`);
     }
 
     const totalSteps = animationSteps.length;
@@ -1451,18 +1470,26 @@ function visualizeMSTPrim(graphName, container, nodes, edges, svg, arrowId) {
             const step = animationSteps[idx];
 
             if (step.type === 'start') {
-                logHTML += `<div>Started growing tree from node <span style="color: #ff8a65">${step.node}</span></div><br>`;
+                logHTML += `<div>Started growing tree from node <span style="color: #ff8a65">${step.node}</span></div>`;
+                if (step.pqState) {
+                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
+                }
+                logHTML += `<br>`;
                 mstNodes.add(safe(step.node));
             } else if (step.type === 'eval') {
                 logHTML += `<div>Evaluating frontier edge <span style="color: #a3bf60">${step.u} - ${step.v}</span> (w: ${step.w})...</div>`;
                 evaluatingEdge = `${safe(step.u)}-${safe(step.v)}`;
             } else if (step.type === 'accept') {
-                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Added node ${step.newNode} to MST.</div><br>`;
+                logHTML += `<div style="padding-left: 10px; color: #a3bf60;">↳ Accepted! Added node ${step.newNode} to MST.</div>`;
                 mstEdges.add(`${safe(step.u)}-${safe(step.v)}`);
                 mstEdges.add(`${safe(step.v)}-${safe(step.u)}`);
                 mstNodes.add(safe(step.u));
                 mstNodes.add(safe(step.v));
                 totalWeight += step.w;
+                if (step.pqState) {
+                    logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Priority Queue: [${step.pqState.join(', ')}]</div>`;
+                }
+                logHTML += `<div style="color: #9b59b6; font-size: 0.9em; margin-top: 5px; padding-left: 10px;">Current MST Cost: ${totalWeight}</div><br>`;
                 evaluatingEdge = null;
             } else if (step.type === 'reject') {
                 logHTML += `<div style="padding-left: 10px; color: #ff8a65;">↳ Rejected! Both nodes already in MST.</div><br>`;
